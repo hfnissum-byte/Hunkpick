@@ -115,7 +115,7 @@ function matchEol(text, original) {
 const COLOUR =
   !process.env.NO_COLOR && (process.env.FORCE_COLOR === "1" || process.stdout.isTTY === true);
 
-const wrap = (code) => (s) => (COLOUR ? `[${code}m${s}[0m` : String(s));
+const wrap = (code) => (s) => (COLOUR ? `\u001b[${code}m${s}\u001b[0m` : String(s));
 const c = {
   green: wrap(32),
   yellow: wrap(33),

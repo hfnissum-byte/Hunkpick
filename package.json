@@ -1,23 +1,38 @@
 {
   "name": "jevmerge",
   "version": "0.1.0",
-  "description": "Git merge conflict resolver: code enumerates valid resolutions, Jev picks",
-  "main": "index.js",
-  "directories": {
-    "lib": "lib",
-    "test": "test"
-  },
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "description": "Resolve git merge conflicts by enumeration and judgment: code enumerates every valid resolution, a model picks, code gates the pick.",
   "type": "module",
   "bin": {
     "jevmerge": "./jevmerge.mjs"
   },
-  "dependencies": {
+  "scripts": {
+    "test": "node test/run.mjs",
+    "bench": "node bench/replay.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "git",
+    "merge",
+    "conflict",
+    "merge-conflict",
+    "three-way-merge",
+    "typesafe",
+    "cli"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hfnissum-byte/jevmerge.git"
+  },
+  "bugs": {
+    "url": "https://github.com/hfnissum-byte/jevmerge/issues"
+  },
+  "homepage": "https://github.com/hfnissum-byte/jevmerge#readme",
+  "author": "hfnissum-byte",
+  "license": "ISC",
+  "devDependencies": {
     "@napi-rs/canvas": "^1.0.9",
     "gifenc": "^1.0.3"
   }
