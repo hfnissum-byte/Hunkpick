@@ -303,12 +303,12 @@ have written. It is a first pass over the mechanical conflicts, not an unattende
 bot. The usual loop:
 
 ```bash
-node jevmerge.mjs            # see what it proposes
-node jevmerge.mjs --apply
+node hunkpick.mjs            # see what it proposes
+node hunkpick.mjs --apply
 git diff                     # read it before git add
 ```
 
-If one is wrong, that file goes back to its original conflict. jevmerge never touches the
+If one is wrong, that file goes back to its original conflict. hunkpick never touches the
 index, so all three stages are still there:
 
 ```bash

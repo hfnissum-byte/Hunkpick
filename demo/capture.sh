@@ -2,8 +2,8 @@
 # Build a small repo with four conflicts of four different shapes, run the real
 # commands, and save their real output for demo/render.mjs to draw.
 #
-#   bash demo/capture.sh /tmp/jevmerge-demo
-#   node demo/render.mjs /tmp/jevmerge-demo/cap demo/jevmerge.gif
+#   bash demo/capture.sh /tmp/hunkpick-demo
+#   node demo/render.mjs /tmp/hunkpick-demo/cap demo/hunkpick.gif
 #
 # The four shapes, one per mechanism:
 #   cart.js       both sides changed one line compatibly   -> token merge
@@ -12,8 +12,8 @@
 #   package.json  both sides added a dependency            -> structural merge
 set -euo pipefail
 
-OUT="${1:-/tmp/jevmerge-demo}"
-JEVMERGE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/jevmerge.mjs"
+OUT="${1:-/tmp/hunkpick-demo}"
+HUNKPICK="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/hunkpick.mjs"
 
 rm -rf "$OUT"
 mkdir -p "$OUT/repo" "$OUT/cap"
@@ -121,12 +121,12 @@ git add -A && git commit -qm "cart: multiply by quantity; add logging"
 
 # Every command below is the real thing, and its real output is what gets drawn.
 git merge feature/checkout > "$OUT/cap/01.txt" 2>&1 || true
-FORCE_COLOR=1 node "$JEVMERGE" > "$OUT/cap/dry.txt" 2>&1 || true
-FORCE_COLOR=1 node "$JEVMERGE" --apply > "$OUT/cap/02.txt" 2>&1 || true
+FORCE_COLOR=1 node "$HUNKPICK" > "$OUT/cap/dry.txt" 2>&1 || true
+FORCE_COLOR=1 node "$HUNKPICK" --apply > "$OUT/cap/02.txt" 2>&1 || true
 head -8 package.json > "$OUT/cap/03.txt" 2>&1
 sed -n '1,4p' server.js > "$OUT/cap/04.txt" 2>&1
 
 echo "captured to $OUT/cap"
 echo
-echo "  node demo/render.mjs $OUT/cap demo/jevmerge.gif"
+echo "  node demo/render.mjs $OUT/cap demo/hunkpick.gif"
 echo "  node demo/svg.mjs    $OUT/cap/dry.txt demo/output.svg"

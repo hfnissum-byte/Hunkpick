@@ -79,7 +79,7 @@ const read = (n) => {
 
 const STEPS = [
   { cmd: "git merge feature/checkout", file: "01.txt" },
-  { cmd: "jevmerge --apply", file: "02.txt" },
+  { cmd: "hunkpick --apply", file: "02.txt" },
   { cmd: "head -8 package.json", file: "03.txt" },
   { cmd: "sed -n '1,4p' server.js", file: "04.txt" },
 ];
@@ -183,7 +183,7 @@ function drawScreen(screen) {
   ctx.font = `13px Consolas, monospace`;
   ctx.fillStyle = "#7c8899";
   ctx.textAlign = "center";
-  ctx.fillText("jevmerge — resolve conflicts by enumeration and judgment", W / 2, TITLEBAR / 2 + 4.5);
+  ctx.fillText("hunkpick — resolve conflicts by enumeration and judgment", W / 2, TITLEBAR / 2 + 4.5);
   ctx.textAlign = "left";
 
   // body, scrolled to the tail

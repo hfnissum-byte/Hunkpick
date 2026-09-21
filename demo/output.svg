@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="771" height="519" viewBox="0 0 771 519" role="img" aria-label="jevmerge output: two conflicts resolved, two left for a person">
+<svg xmlns="http://www.w3.org/2000/svg" width="771" height="519" viewBox="0 0 771 519" role="img" aria-label="hunkpick output: two conflicts resolved, two left for a person">
   <rect x="0.5" y="0.5" width="770" height="518" rx="10" fill="#0f131c" stroke="#222b3a"/>
   <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="14" fill="#c9d4e4">
   <text x="20" y="32" xml:space="preserve"><tspan fill="#5fc9d8" font-weight="600">cart.js</tspan></text>

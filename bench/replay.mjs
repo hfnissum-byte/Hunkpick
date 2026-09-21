@@ -1,5 +1,5 @@
 /**
- * Replays merges from a real repository and scores jevmerge against the
+ * Replays merges from a real repository and scores hunkpick against the
  * committed resolution.
  *
  * For each merge commit M with parents P1 and P2: check out P1, merge P2, and
@@ -32,7 +32,7 @@ import { validate, validateInFile } from "../lib/validate.mjs";
 import { canMergeStructurally, structuredMerge } from "../lib/structured.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const CLI = join(HERE, "..", "jevmerge.mjs");
+const CLI = join(HERE, "..", "hunkpick.mjs");
 
 /** Stable lines to anchor on either side of a conflict. */
 const ANCHOR = 4;

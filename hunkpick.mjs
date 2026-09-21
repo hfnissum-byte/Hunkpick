@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * jevmerge: resolve git merge conflicts by generating candidates and having a
+ * hunkpick: resolve git merge conflicts by generating candidates and having a
  * model pick one.
  *
  * Generates the candidate resolutions, discards those that do not parse, sends
@@ -41,10 +41,10 @@ import { MODEL } from "./lib/typesafe.mjs";
 const DEFAULT_KINDS = ["ours", "union", "merged_lines", "merged_tokens", "structural"];
 
 const HELP = `
-jevmerge — resolve git merge conflicts by enumeration and judgment
+hunkpick — resolve git merge conflicts by enumeration and judgment
 
-  jevmerge                 inspect the current conflicts and report (default)
-  jevmerge --apply         write the resolutions it is confident about
+  hunkpick                 inspect the current conflicts and report (default)
+  hunkpick --apply         write the resolutions it is confident about
 
 Options
   --apply                  write files; without it nothing is modified
@@ -497,7 +497,7 @@ async function main() {
 main().then(
   (code) => process.exit(code),
   (err) => {
-    console.error(`jevmerge: ${err.message}`);
+    console.error(`hunkpick: ${err.message}`);
     process.exit(2);
   }
 );

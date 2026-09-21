@@ -1,10 +1,10 @@
 {
-  "name": "jevmerge",
+  "name": "hunkpick",
   "version": "0.1.0",
   "description": "Resolve git merge conflicts by enumeration and judgment: code enumerates every valid resolution, a model picks, code gates the pick.",
   "type": "module",
   "bin": {
-    "jevmerge": "./jevmerge.mjs"
+    "hunkpick": "./hunkpick.mjs"
   },
   "scripts": {
     "test": "node test/run.mjs",
@@ -24,12 +24,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/hfnissum-byte/jevmerge.git"
+    "url": "git+https://github.com/hfnissum-byte/hunkpick.git"
   },
   "bugs": {
-    "url": "https://github.com/hfnissum-byte/jevmerge/issues"
+    "url": "https://github.com/hfnissum-byte/hunkpick/issues"
   },
-  "homepage": "https://github.com/hfnissum-byte/jevmerge#readme",
+  "homepage": "https://github.com/hfnissum-byte/hunkpick#readme",
   "author": "hfnissum-byte",
   "license": "ISC",
   "devDependencies": {
