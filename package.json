@@ -1,0 +1,24 @@
+{
+  "name": "jevmerge",
+  "version": "0.1.0",
+  "description": "Git merge conflict resolver: code enumerates valid resolutions, Jev picks",
+  "main": "index.js",
+  "directories": {
+    "lib": "lib",
+    "test": "test"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bin": {
+    "jevmerge": "./jevmerge.mjs"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "^1.0.9",
+    "gifenc": "^1.0.3"
+  }
+}
