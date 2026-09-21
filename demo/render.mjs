@@ -1,9 +1,7 @@
 /**
- * Turn captured terminal output into an animated GIF.
+ * Renders captured terminal output as an animated GIF.
  *
- * Everything it renders came out of a real run — demo/capture.sh records the
- * commands, this only draws them. Nothing here invents output, which is the
- * point: a demo you hand-wrote is a mockup, not a demo.
+ * demo/capture.sh records the commands; this only draws what they printed.
  *
  *   node demo/render.mjs <capture-dir> <out.gif>
  */

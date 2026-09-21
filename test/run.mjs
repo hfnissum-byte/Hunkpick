@@ -235,7 +235,7 @@ check("accepts valid ESM in a .js file", () => {
 });
 
 check("accepts CommonJS-only syntax in a .js file", () => {
-  // Valid as .cjs, a syntax error as .mjs — the fallback has to cover it.
+  // Valid as .cjs, a syntax error as .mjs. The fallback has to cover it.
   eq(validate("c.js", "const o = {};\nwith (o) { }\n").ok, true);
 });
 

@@ -1,7 +1,6 @@
 /**
- * Show one replayed conflict in full: both sides, every candidate, and what
- * the humans committed. For checking the harness itself — a benchmark you have
- * not eyeballed is a benchmark you do not believe.
+ * Dumps one replayed conflict: both sides, every candidate, and the committed
+ * resolution. Used to check the replay harness itself.
  *
  *   node bench/inspect.mjs --repo <path> --merge <sha> [--path <file>]
  */

@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 /**
- * jevmerge — resolve git merge conflicts by enumeration and judgment.
+ * jevmerge: resolve git merge conflicts by generating candidates and having a
+ * model pick one.
  *
- * Code enumerates every resolution a conflict could legitimately have and
- * throws out the ones that do not parse. Jev picks among the survivors. Code
- * decides whether the pick is confident enough to keep.
+ * Generates the candidate resolutions, discards those that do not parse, sends
+ * the rest to the model, and applies thresholds to the answer in code.
  *
- * Nothing is written without --apply, nothing is ever staged or committed, and
- * any conflict that is not resolved keeps its markers exactly as they were.
+ * Writes nothing without --apply. Never stages or commits. Unresolved
+ * conflicts keep their markers.
  */
 
 import { readFileSync, writeFileSync } from "node:fs";
@@ -22,17 +22,16 @@ import { canMergeStructurally, structuredMerge } from "./lib/structured.mjs";
 import { MODEL } from "./lib/typesafe.mjs";
 
 /**
- * Which resolution kinds may be applied without a person looking.
+ * Resolution kinds that may be applied unattended.
  *
- * Measured, not guessed. Replaying 25 real conflicted merges from express:
- * `theirs` was chosen 17 times and was wrong 17 times, `union_reversed` 4 and
- * wrong 4. Dropping both took precision from 49% to 81% and cost nothing in
- * recall, because neither ever produced a right answer. `base` and `drop`
- * throw work away outright, so they need a person on principle.
+ * Set from bench/replay.mjs over 25 conflicted merges in expressjs/express:
+ * `theirs` was chosen 17 times and wrong 17 times, `union_reversed` 4 and
+ * wrong 4. Excluding both raised precision from 49% to 81% with no loss of
+ * recall. `base` and `drop` discard work, so they also require review.
  *
- * That is one repository's workflow, where a maintenance branch is merged into
- * a development branch and the development side nearly always wins. Somewhere
- * with a different habit could easily need `theirs` back: `--kinds all`.
+ * Those proportions are specific to that repository's workflow, where a
+ * maintenance branch is merged into a development branch. Use `--kinds all`
+ * for the full set.
  */
 const DEFAULT_KINDS = ["ours", "union", "merged_lines", "merged_tokens", "structural"];
 
@@ -108,9 +107,8 @@ function matchEol(text, original) {
 }
 
 /**
- * Colour when a person is watching, plain text when something is reading the
- * output. NO_COLOR is honoured, FORCE_COLOR overrides both — the latter is how
- * the demo recording gets colour out of a pipe.
+ * Colour on a TTY, plain text otherwise. NO_COLOR disables it; FORCE_COLOR=1
+ * forces it on, which is how the demo capture gets colour through a pipe.
  */
 const COLOUR =
   !process.env.NO_COLOR && (process.env.FORCE_COLOR === "1" || process.stdout.isTTY === true);
@@ -282,12 +280,11 @@ async function main() {
         continue;
       }
 
-      // Candidates of the same kind are the same decision in different
-      // clothes: two orderings of a union, two orderings of a token merge.
-      // The Choice splits its mass between them, which reads as doubt about
-      // the approach when it is only doubt about the order. Marginalising over
-      // the kind recovers the number we actually want to gate on; the pick
-      // within the kind is still the model's.
+      // Candidates of the same kind differ only in ordering: two orderings of
+      // a union, two of a token merge. The Choice splits probability between
+      // them, which lowers confidence without the model being uncertain about
+      // the kind. Summing over the kind gives the number to gate on. The
+      // selection within the kind is still the model's.
       const mass = entry.candidates
         .filter((c) => c.kind === chosen.kind)
         .reduce((sum, c) => sum + (v.probabilities[c.id] ?? 0), 0);

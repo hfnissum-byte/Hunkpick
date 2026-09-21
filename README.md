@@ -1,306 +1,273 @@
 # jevmerge
 
-**Resolves git merge conflicts by listing every sensible answer, then having a model point at one.**
+Resolves git merge conflicts by generating the possible resolutions and having a model
+pick one.
 
-Most AI merge tools ask a language model to *write* the resolution. This one never does.
-Instead it works out, mechanically, every resolution a conflict could legitimately have —
-take your side, take theirs, keep both, combine them — and discards any that do not
-compile. The model's only job is to point at one of the survivors.
-
-That flip is the whole design. The model cannot invent a resolution, so it cannot produce
-a file that does not parse. The worst it can do is pick a valid answer that is the wrong
-valid answer, which you catch by reading the diff.
+For each conflict it computes the candidate resolutions (ours, theirs, union, line merge,
+token merge), discards the ones that do not parse, and sends the rest to a model to
+choose between. The model selects a candidate. It does not write code, so it cannot
+produce a file that fails to parse. It can pick the wrong candidate, which you catch by
+reading the diff.
 
 ![jevmerge resolving four conflicts](demo/jevmerge.gif)
 
-Four conflicts in the clip, four different shapes. It merges three and hands the fourth
-back, because that one is a decision rather than a merge. Every frame is real output —
-`demo/capture.sh` runs the commands, `demo/render.mjs` only draws what they printed.
+The clip runs it against four conflicts. It resolves three and leaves the fourth.
+`demo/capture.sh` builds the repo and runs the commands, `demo/render.mjs` draws the
+captured output.
 
----
-
-**Contents** · [Quick start](#quick-start) · [Reading the output](#reading-the-output) ·
-[How it works](#how-it-works) · [JSON](#json-files-are-merged-by-key) ·
-[Options](#options) · [How well it works](#how-well-it-works) ·
-[Thresholds](#thresholds) · [Limits](#limits) · [Layout](#project-layout)
-
----
+**Contents:** [Quick start](#quick-start) · [Output](#output) · [How it works](#how-it-works) ·
+[JSON](#json-files) · [Options](#options) · [Benchmark](#benchmark) ·
+[Thresholds](#thresholds) · [Limits](#limits) · [Layout](#layout)
 
 ## Quick start
 
-**You need** Node 20 or newer, git, and a [TypeSafe](https://typesafe.ai) API key.
-There are no runtime dependencies — the tool uses only Node built-ins.
+Requires Node 20+, git, and a [TypeSafe](https://typesafe.ai) API key. No runtime
+dependencies; the tool imports only Node built-ins.
 
 ```bash
 git clone https://github.com/hfnissum-byte/jevmerge.git
 cd jevmerge
-cp .env.example .env        # then put your key in it
+cp .env.example .env        # add your key
 node test/run.mjs           # 46 offline tests, no API calls
 ```
 
-Then, in a repository with conflicts:
+In a repository with conflicts:
 
 ```bash
-node /path/to/jevmerge/jevmerge.mjs            # report only, changes nothing
-node /path/to/jevmerge/jevmerge.mjs --apply    # write the resolutions it is sure about
+node /path/to/jevmerge/jevmerge.mjs            # report only
+node /path/to/jevmerge/jevmerge.mjs --apply    # write the resolutions that pass the gates
 ```
 
-**Nothing is written without `--apply`.** Nothing is ever staged or committed — that
-stays your decision. Conflicts it does not resolve keep their markers exactly as they
-were, so you can finish them by hand as usual.
+Without `--apply` nothing is modified. Nothing is staged or committed in either case.
+Unresolved conflicts keep their markers.
 
-## Reading the output
+## Output
 
 ![jevmerge output for four conflicts](demo/output.svg)
 
-| what you see | what it means |
+| field | meaning |
 | --- | --- |
-| `RESOLVE` / `LEAVE` | whether this conflict will be written, or handed back to you |
-| `merged_tokens`, `union`, … | *which kind* of resolution was picked — see the table below |
-| `approach` | how sure the model is about that kind of resolution, 0 to 1 |
-| `mechanical` | how sure it is that this is a merge at all, rather than a decision for a person |
-| `correct` | JSON only: is the key-by-key merge the right result, and safe to apply unseen |
-| `│ …` | the actual lines that would be written |
-| `runner-up` | the next best candidate, when it was close enough to be worth knowing |
+| `RESOLVE` / `LEAVE` | whether the conflict will be written or left for you |
+| `merged_tokens`, `union`, … | which kind of resolution was chosen |
+| `approach` | probability the model assigns to that kind, 0 to 1 |
+| `mechanical` | probability that this is a merge rather than a decision for a person |
+| `correct` | JSON only: whether the key merge is right and safe to apply unreviewed |
+| `│ …` | the lines that would be written |
+| `runner-up` | next best candidate, shown when above 0.05 |
 
-Both bars must clear their thresholds before anything is written. A bar turns amber near
-its threshold and red well below it.
+Both bars must clear their thresholds before a conflict is written. Bars are amber near
+the threshold and red below it.
 
-**The kinds of resolution:**
+Resolution kinds:
 
-| kind | what it does |
+| kind | result |
 | --- | --- |
-| `ours` | keep the current branch's version |
-| `theirs` | keep the incoming branch's version |
-| `union` | keep both, one after the other |
-| `merged_lines` | combine them — they changed different lines |
-| `merged_tokens` | combine them *within* one line |
-| `structural` | merge the file by key (JSON only) |
+| `ours` | current branch's version |
+| `theirs` | incoming branch's version |
+| `union` | both, one after the other |
+| `merged_lines` | both, combined across lines |
+| `merged_tokens` | both, combined within a line |
+| `structural` | JSON merged key by key |
 | `base` / `drop` | revert both, or delete the region |
 
-In the example above, the two it left alone are the interesting ones:
+Two conflicts in the sample were left:
 
-- **`server.js` line 9** — both branches set the same timeout, to 1s and 30s. There is no
-  mechanical answer, and `mechanical 0.15` says so. Somebody has to decide.
-- **`cart.js` line 3** — it found a combination it was completely sure about as an
-  *approach* (1.00) and still declined, because multiplying a tax rate by a quantity
-  changes what the function computes. That is a decision wearing a merge's clothes.
+- `server.js` line 9: the branches set the same timeout to 1s and 30s. `mechanical 0.15`
+  reflects that there is no mechanical answer.
+- `cart.js` line 3: the token merge scored 1.00 on approach but 0.28 on mechanical.
+  Multiplying a tax rate by a quantity changes the result of the function, so it is not
+  a merge.
 
 ## How it works
 
-### 1. Rebuild the conflict with its ancestor
+### 1. Rebuild the conflict with its base
 
-The file in your working tree shows both sides but not what they started from. jevmerge
-re-derives the conflict from git's index stages — `:1:` base, `:2:` ours, `:3:` theirs —
-via `git merge-file --diff3`, so every hunk carries its common ancestor. Your working
-tree is not touched to do this.
+The working-tree file contains both sides but not the common ancestor. jevmerge reads
+git's index stages (`:1:` base, `:2:` ours, `:3:` theirs) and runs
+`git merge-file --diff3` on them, which gives each hunk its base. The working tree is not
+modified.
 
-### 2. Enumerate every candidate
+### 2. Generate candidates
 
-For each hunk: `ours`, `theirs`, `base`, `union` in both orders, `drop`, and two computed
-merges — one across the hunk's **lines**, one across a line's **tokens**. The same
-three-way algorithm runs at both scales.
+Per hunk: `ours`, `theirs`, `base`, `union` in both orders, `drop`, plus a line-level and
+a token-level three-way merge. The same merge function runs at both scales.
 
-The token pass catches what line-level merging structurally cannot:
+The token pass handles the case where both sides edited one line compatibly:
 
 ```
 base      sum += it.price;
 ours      sum += it.price * it.qty;
 theirs    sum += it.price * (1 + TAX);
-────────────────────────────────────────────
 candidate sum += it.price * it.qty * (1 + TAX);
 ```
 
-Neither branch contains that line. Both intentions survive in it.
+The candidate appears in neither branch.
 
-### 3. Throw out anything that does not parse
+### 3. Discard candidates that do not parse
 
-Every candidate is rendered into the **whole file** and parsed — not checked in
-isolation, because a hunk that parses on its own can still break the code around it.
-Whatever fails is gone before the model ever sees it.
+Each candidate is rendered into the full file and parsed, with the other conflicts in
+that file pinned to `ours`. Checking a hunk in isolation is not sufficient; it can parse
+on its own and still break the surrounding code.
 
-### 4. Ask two questions per conflict
+### 4. Ask the model
 
-Every conflict in the repository goes out in a single request. Jev is a *System One*
-model: it does not generate text, it returns typed answers with probabilities attached.
-Two question types are used here.
+All conflicts in the repository go out in one request. Jev is a System One model: it
+returns typed values with probabilities instead of generating text. Two question types
+are used.
 
-- **Choice** — pick one of the surviving candidates. Which one keeps both sides' intent?
-- **Noul** — a yes/no with a probability. Is this something a person has to decide?
+- `Choice` over the surviving candidates: which one preserves both sides' intent.
+- `Noul`, a yes/no with a probability: whether a person needs to decide this.
 
-The second question exists because confidence cannot express it. A conflict can have one
-obviously best mechanical resolution and still be a real decision: two valid timeouts,
-two valid defaults, a security check one branch removed. High confidence, still not ours
-to take.
+The second question is separate because confidence does not cover it. A conflict can have
+one clearly best mechanical resolution and still require a decision, for example two
+valid timeout values or a check that one branch removed.
 
-### 5. Gate the answer in code
+### 5. Gate
 
-Both thresholds are checked by code, never by the model, and the chosen kind must be one
-that is allowed to apply unattended. Anything that fails a gate is left for you with its
-markers intact.
+Thresholds are applied in code. The chosen kind must also be on the list allowed to apply
+unattended. Conflicts that fail a gate keep their markers.
 
-## JSON files are merged by key
+## JSON files
 
-Line and token merges cannot fix the commonest conflict in a JavaScript repo — two
-branches adding a different dependency to `package.json` — because the correct result
-needs a comma that appears in neither version.
+A line or token merge cannot resolve two branches adding different keys to
+`package.json`, because the result requires a comma that appears in neither version.
 
-So `.json` files take a different route: parse all three stages, three-way merge the
-objects key by key, serialise once. A single Noul then asks whether the result is right
-and safe to apply unreviewed.
+`.json` files are therefore parsed from all three stages, merged key by key, and
+serialised once. One Noul asks whether the result is correct and safe to apply.
 
-It declines and falls back to the line-level path when structure cannot settle things:
-two different values for one key, an ambiguous array order, or a key one branch deleted
-while the other edited it. It also declines when the merged result is identical to one
-side — that is a *choice* between branches, and a Choice question handles it better.
+The structural merge declines and falls back to the line path when it cannot settle the
+conflict: two values for one key, an ambiguous array order, or a key deleted on one side
+and edited on the other. It also declines when the result equals one side, since that is
+a choice between branches and the Choice question handles it.
 
 ## Options
 
 | Flag | |
 | --- | --- |
 | `--apply` | write files; without it nothing is modified |
-| `--confidence <0-1>` | minimum for the `approach` bar (default 0.75) |
-| `--safe <0-1>` | minimum for the `mechanical` bar (default 0.45) |
-| `--kinds <a,b,…\|all>` | which kinds may apply unattended (default is measured, see below) |
-| `--context <n>` | lines of surrounding context shown to the model (default 6) |
-| `--all` | apply everything regardless of the gates |
+| `--confidence <0-1>` | minimum `approach` (default 0.75) |
+| `--safe <0-1>` | minimum `mechanical` (default 0.45) |
+| `--kinds <a,b,…\|all>` | kinds allowed to apply unattended (default set from the benchmark) |
+| `--context <n>` | lines of context sent to the model (default 6) |
+| `--all` | apply everything, ignoring the gates |
 | `--json` | machine-readable output |
 | `--model <name>` | override the model |
 
-**Exit codes:** `0` everything resolved · `1` some left for you · `2` nothing to do, or an error.
+Exit codes: `0` all resolved, `1` some left, `2` nothing to do or an error.
 
-## How well it works
+## Benchmark
 
-Measured, not asserted. `bench/replay.mjs` replays real merges from a real repository:
-check out a merge commit's first parent, merge the second, and compare what jevmerge does
-against what the maintainers actually committed. Nobody wrote that answer key to make
-this tool look good.
+`bench/replay.mjs` replays merges from a real repository. For each merge commit it checks
+out the first parent, merges the second, runs jevmerge, and compares the result to the
+merge commit's tree.
 
 ```bash
 node bench/replay.mjs --repo /path/to/a/clone --max 25
 ```
 
-Scoring is per conflict region, anchored on the stable lines either side. Whole-file
-comparison would measure the wrong thing, because merge commits contain plenty of edits
-that are not conflict resolution.
+Scoring is per conflict region, anchored on the stable lines on either side. Whole-file
+comparison does not work here because merge commits also contain edits unrelated to the
+conflicts.
 
-Over 25 conflicted merges from `expressjs/express`, **118 conflict regions** had a
-recoverable answer. In **77%** of them the human's resolution was among the candidates,
-so enumeration covers most of what people actually do. The remaining 23% no mechanical
-tool could have matched.
+Over 25 conflicted merges from `expressjs/express`, 118 conflict regions had a recoverable
+answer. In 77% of them the committed resolution was among the candidates. The remaining
+23% were not reachable by any combination of the two sides.
 
-The first run allowed every kind, and the result was a coin flip:
+With all kinds enabled:
 
 | kind chosen | correct |
 | --- | --- |
-| `ours` | 5/5 — 100% |
-| `merged_lines` | 19/23 — 83% |
-| `union` | 2/3 — 67% |
-| `theirs` | **0/17 — 0%** |
-| `union_reversed` | **0/4 — 0%** |
+| `ours` | 5/5 (100%) |
+| `merged_lines` | 19/23 (83%) |
+| `union` | 2/3 (67%) |
+| `theirs` | 0/17 (0%) |
+| `union_reversed` | 0/4 (0%) |
 | `base` | 0/1 |
-| **overall** | **26/53 — 49%** |
+| total | 26/53 (49%) |
 
-`theirs` was chosen seventeen times and wrong seventeen times. Refusing to auto-apply it
-and `union_reversed` raises precision from **49% to 81%** and costs *nothing* in recall —
-between them they never once produced a right answer. That is now the default, and
-`--kinds all` puts them back.
+`theirs` was chosen 17 times and was wrong every time. Excluding it and `union_reversed`
+raises precision from 49% to 81% with no loss of recall, since neither produced a correct
+result. That is the default; `--kinds all` restores them.
 
-The asymmetry makes sense given what the humans chose: `ours` 55% of the time,
-`merged_lines` 27%, `theirs` only 10%. Express merges a maintenance branch into a
-development branch and the development side nearly always wins. A repository with
-different habits could well need `theirs` back. **These are one workflow's numbers, not
-a law.**
+The committed resolutions were `ours` 55% of the time, `merged_lines` 27%, `theirs` 10%.
+Express merges a maintenance branch into a development branch and the development side
+usually wins, so these proportions are specific to that workflow.
 
-### What it is not
-
-Even gated, it resolves a minority of conflicts. On a 10-merge confirmation run, 5 of 7
-auto-resolutions were right and it handed 82% of the solvable ones back to a human. The
-judgment is the bottleneck, not the enumeration: in 17 regions the answer was plainly
-`ours` and it did not take it.
-
-Treat `--apply` as a first pass that clears the boring conflicts, and read the diff
-afterwards. It is not an unattended merge bot, and the numbers above are why that is
-stated here rather than discovered the hard way.
+Coverage is low even with the gates. On a 10-merge confirmation run, 5 of 7
+auto-resolutions were correct and 82% of the solvable conflicts were left for a human. The
+model's selection is the limiting factor, not the candidate generation: in 17 regions the
+committed answer was `ours` and it was not chosen. `--apply` is useful as a first pass
+over the mechanical conflicts. Review the diff afterwards.
 
 ## Thresholds
 
-Six identical runs over the same two-file merge, to see which signals actually move:
+Six runs over the same two-file merge:
 
-| signal | range over 6 runs |
+| signal | range |
 | --- | --- |
-| structural merge, `correct` | 0.76 – 0.78 |
+| structural `correct` | 0.76 – 0.78 |
 | two added imports, `approach` | 0.94 – 0.96 |
-| two added imports, `mechanical` | **0.59 – 0.67** |
+| two added imports, `mechanical` | 0.59 – 0.67 |
 | 1s vs 30s timeout, `mechanical` | 0.15 – 0.17 |
 
-Two things follow. The Choice is steady and the Noul is the noisy one, so the Noul is
-where a threshold gets into trouble. And the Noul still separates the two cases cleanly —
-roughly 0.16 against 0.63 — so the signal was fine and only the threshold was misplaced.
+The Choice is stable across runs and the Noul is not, so the Noul threshold is the one
+that matters. The Noul still separates the two cases, roughly 0.16 against 0.63, so the
+signal is usable and the original threshold was badly placed. `--safe` was 0.60, inside
+the upper range, and the same conflict resolved or did not depending on the run. It now
+defaults to 0.45, with about 0.14 of margin on either side.
 
-`--safe` started at 0.60, sitting *inside* the upper cluster, and the same conflict
-resolved or did not depending on the run. It now defaults to 0.45, in the gap, with about
-0.14 of margin either side.
+That is fitted to two clusters. Run the benchmark on your own merges with `--json` and
+adjust both thresholds.
 
-That is calibrated against two clusters. It is a better guess, not a tuned value. Run it
-over a batch of your own merges with `--json`, compare against what you would have done,
-and move both numbers.
+### Gating on approach rather than confidence
 
-### Why the gate uses "approach", not raw confidence
+Two orderings of a union are the same resolution in a different order. The Choice
+distributes probability across both, which lowers confidence even though the model is not
+uncertain about the kind.
 
-Two orderings of a union are the same decision in different clothes. The Choice splits
-its probability between them, which reads as doubt about *what to do* when it is only
-doubt about the order.
+The first conflict this was tested on selected the correct resolution at 0.64 with its own
+reverse ordering at 0.30. Summed, the kind had 0.94.
 
-The first real conflict this was run against picked the right resolution at 0.64, with
-its own mirror image as runner-up at 0.30. The model was 0.94 sure of the approach and
-the gate could not see it.
-
-So the gate sums probability across candidates of the same kind and tests that instead —
-which is why the bar is labelled `approach`. Summing a distribution over a partition of
-its own outcomes is just arithmetic; the pick *within* the kind is still the model's.
-`ours` and `theirs` are single-candidate kinds, so nothing changes for them.
+The gate therefore sums probability across candidates of the same kind, which is what the
+`approach` column shows. The selection within the kind is still the model's. `ours` and
+`theirs` have one candidate each, so their numbers are unchanged.
 
 ## Limits
 
-- **Content conflicts only.** Add/add, delete/modify and rename conflicts are reported
-  and skipped — there is no text to enumerate over.
-- **Syntax checking covers `.js`, `.mjs`, `.cjs`, `.py` and `.json`.** Everything else is
-  checked only for surviving conflict markers and otherwise trusted. Adding a language
-  means adding a case to `lib/validate.mjs`.
-- **`node --check` lies about `.js` files.** A `.js` file containing ESM syntax exits 0
-  even when it does not parse: the CommonJS parse fails, Node retries it as a module, and
-  the error is lost on the way. The validator checks JavaScript as `.mjs`, then `.cjs`,
-  and never as `.js`. A regression test pins this.
-- **It resolves, it does not review.** A merge that parses and preserves both intents can
-  still be wrong. Read the diff.
+- Content conflicts only. Add/add, delete/modify and rename conflicts are reported and
+  skipped.
+- Syntax checking covers `.js`, `.mjs`, `.cjs`, `.py` and `.json`. Other file types are
+  checked for leftover conflict markers and otherwise accepted. Add cases to
+  `lib/validate.mjs` for more.
+- `node --check` is unreliable for `.js`. A `.js` file containing ESM syntax exits 0 even
+  when it does not parse: the CommonJS parse fails, Node retries as a module, and the
+  error is discarded. The validator checks JavaScript as `.mjs`, then `.cjs`. There is a
+  regression test for this.
+- A resolution that parses and preserves both sides can still be wrong. Review the diff.
 
-## Project layout
+## Layout
 
 | Path | |
 | --- | --- |
-| `jevmerge.mjs` | the CLI: enumerate, judge, gate, write, report |
+| `jevmerge.mjs` | CLI: generate, judge, gate, write, report |
 | `lib/git.mjs` | index stages, diff3 reconstruction, branch context |
-| `lib/conflicts.mjs` | marker parsing and rendering; throws rather than guesses |
-| `lib/candidates.mjs` | three-way merge, used on lines and on tokens |
-| `lib/structured.mjs` | three-way merge on keys, for JSON |
-| `lib/validate.mjs` | syntax gates per file type |
-| `lib/judge.mjs` | one request covering the whole merge |
-| `test/run.mjs` | 46 offline tests — no git, no API |
-| `bench/replay.mjs` | replays real merges, scores against the committed answer |
-| `bench/inspect.mjs` | dumps one conflict, its candidates and the human's answer |
-| `demo/capture.sh` | builds the demo repo and records the real runs |
-| `demo/render.mjs` | draws the recording as a GIF |
-| `demo/svg.mjs` | draws one captured run as the SVG above |
+| `lib/conflicts.mjs` | conflict marker parsing and rendering |
+| `lib/candidates.mjs` | three-way merge over lines and tokens |
+| `lib/structured.mjs` | three-way merge over JSON keys |
+| `lib/validate.mjs` | per-extension syntax checks |
+| `lib/judge.mjs` | builds and sends the request |
+| `test/run.mjs` | 46 offline tests, no git or API |
+| `bench/replay.mjs` | replays merges and scores against the commit |
+| `bench/inspect.mjs` | dumps one conflict with its candidates and the committed answer |
+| `demo/capture.sh` | builds the demo repo and records the runs |
+| `demo/render.mjs` | renders a recording as a GIF |
+| `demo/svg.mjs` | renders one run as the SVG above |
 
 ```bash
 npm test
 ```
 
-Run it before anything else. It covers the logic that decides what gets written into
-someone's file.
-
 ## Credentials
 
-Put `TYPESAFE_API_KEY` in a `.env` file beside `jevmerge.mjs`, or set it in the
-environment. The `.env` file is gitignored; `.env.example` shows the shape.
+`TYPESAFE_API_KEY` in a `.env` file next to `jevmerge.mjs`, or in the environment. `.env`
+is gitignored; see `.env.example`.

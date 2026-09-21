@@ -1,25 +1,23 @@
 /**
- * Replay real merges and score jevmerge against what the developers actually
- * committed.
+ * Replays merges from a real repository and scores jevmerge against the
+ * committed resolution.
  *
- * For every merge commit M with parents P1 and P2: check out P1, merge P2, and
- * whatever conflicts is a conflict that really happened. The resolution the
- * humans chose is in the tree of M. That is the answer key, and nobody wrote it
- * to make this tool look good.
+ * For each merge commit M with parents P1 and P2: check out P1, merge P2, and
+ * whatever conflicts is a conflict that actually occurred. The resolution is
+ * in M's tree.
  *
  *   node bench/replay.mjs --repo <path> --max 30
  *
- * Scoring is per hunk, not per file. A merge commit almost always contains
- * edits that are not conflict resolution — people tidy up while merging — so
- * comparing whole files measures the wrong thing. Instead the harness anchors
- * on the stable lines either side of each conflict, finds them in the committed
- * file, and reads out exactly what the human put in between.
+ * Scoring is per hunk. Merge commits usually contain edits unrelated to the
+ * conflicts, so whole-file comparison measures the wrong thing. Instead the
+ * harness anchors on the stable lines either side of a conflict, locates them
+ * in the committed file, and reads out what sits between them.
  *
- * The headline split:
+ * Results are split three ways:
  *
- *   reachable + picked      judgment worked
- *   reachable + not picked  judgment failed        <- the number that matters
- *   not reachable           enumeration fell short, no tool could have matched
+ *   reachable + picked      correct
+ *   reachable + not picked  selection error
+ *   not reachable           candidate generation did not cover it
  */
 
 import { execFileSync } from "node:child_process";
@@ -89,7 +87,7 @@ function deepEqual(a, b) {
 /**
  * Put the clone back on its default branch. The harness leaves HEAD detached
  * on whatever parent it checked out last, and `rev-list HEAD` from there walks
- * a different history — which silently yields nothing to test.
+ * a different history, which silently yields nothing to test.
  */
 function resetRepo(repo) {
   git(repo, ["merge", "--abort"], true);
@@ -172,8 +170,8 @@ const hasContent = (lines) => lines.some((l) => l.trim().length > 0);
  *
  * Anchored on the surrounding stable lines: find them in the committed file,
  * and whatever sits between them is the resolution. Returns null when the
- * anchors are missing or ambiguous — which happens when the merge also edited
- * the context, and is reported as undecided rather than guessed at.
+ * anchors are missing or ambiguous, which happens when the merge also edited
+ * the context. Those are reported as undecided rather than guessed at.
  */
 function humanResolution(parts, index, truthLines) {
   const before = stableBefore(parts, index);
@@ -199,8 +197,8 @@ function scoreFile(repo, path, truth, fileReport) {
   const ext = extname(path).toLowerCase();
   const rows = [];
 
-  // Structured files are merged whole, so they are scored whole — on parsed
-  // content, so that key order and formatting do not count as errors.
+  // Structured files are merged whole, so they are scored whole, on parsed
+  // content, so key order and formatting do not count as errors.
   if (fileReport?.structural) {
     let reachable = null;
     try {

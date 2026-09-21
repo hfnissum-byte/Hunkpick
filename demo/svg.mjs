@@ -6,8 +6,8 @@
  *
  * Each line becomes one <text> with a <tspan> per colour run, and nothing is
  * positioned horizontally by hand. The browser lays the runs out in its own
- * monospace font, so the bars and columns stay aligned whatever font a reader
- * ends up with — which absolute x coordinates would not survive.
+ * monospace font, so columns stay aligned regardless of which font resolves.
+ * Absolute x coordinates would not survive a font substitution.
  */
 
 import { readFileSync, writeFileSync } from "node:fs";
