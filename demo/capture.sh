@@ -121,8 +121,12 @@ git add -A && git commit -qm "cart: multiply by quantity; add logging"
 
 # Every command below is the real thing, and its real output is what gets drawn.
 git merge feature/checkout > "$OUT/cap/01.txt" 2>&1 || true
+FORCE_COLOR=1 node "$JEVMERGE" > "$OUT/cap/dry.txt" 2>&1 || true
 FORCE_COLOR=1 node "$JEVMERGE" --apply > "$OUT/cap/02.txt" 2>&1 || true
 head -8 package.json > "$OUT/cap/03.txt" 2>&1
 sed -n '1,4p' server.js > "$OUT/cap/04.txt" 2>&1
 
 echo "captured to $OUT/cap"
+echo
+echo "  node demo/render.mjs $OUT/cap demo/jevmerge.gif"
+echo "  node demo/svg.mjs    $OUT/cap/dry.txt demo/output.svg"

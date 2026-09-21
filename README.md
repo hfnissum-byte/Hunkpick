@@ -51,27 +51,7 @@ were, so you can finish them by hand as usual.
 
 ## Reading the output
 
-```
-cart.js
-  LEAVE   line 3  merged_tokens   approach ██████████ 1.00   mechanical ███······· 0.29
-           needs a person (0.29 below 0.45)
-           │   for (const it of items) sum += it.price * (1 + TAX) * it.qty;
-
-package.json
-  RESOLVE whole file  merged by key   correct ████████·· 0.77
-           gains from feature/checkout: dependencies.stripe
-
-server.js
-  RESOLVE line 2  union   approach ██████████ 0.95   mechanical ████████·· 0.81
-           │ import fs from "fs";
-           │ import crypto from "crypto";
-  LEAVE   line 9  theirs   approach ████████·· 0.85   mechanical ██········ 0.15
-           theirs is not an auto-applied kind
-           │ const TIMEOUT = 30000;
-
-jev-1.13.0 · 1 request(s) · 2623 in / 251 out
-2/4 conflicts resolved, 2 left for you
-```
+![jevmerge output for four conflicts](demo/output.svg)
 
 | what you see | what it means |
 | --- | --- |
@@ -79,10 +59,12 @@ jev-1.13.0 · 1 request(s) · 2623 in / 251 out
 | `merged_tokens`, `union`, … | *which kind* of resolution was picked — see the table below |
 | `approach` | how sure the model is about that kind of resolution, 0 to 1 |
 | `mechanical` | how sure it is that this is a merge at all, rather than a decision for a person |
+| `correct` | JSON only: is the key-by-key merge the right result, and safe to apply unseen |
 | `│ …` | the actual lines that would be written |
+| `runner-up` | the next best candidate, when it was close enough to be worth knowing |
 
-Both bars must clear their thresholds before anything is written. The bar turns amber
-near the line and red well below it.
+Both bars must clear their thresholds before anything is written. A bar turns amber near
+its threshold and red well below it.
 
 **The kinds of resolution:**
 
@@ -309,6 +291,7 @@ its own outcomes is just arithmetic; the pick *within* the kind is still the mod
 | `bench/inspect.mjs` | dumps one conflict, its candidates and the human's answer |
 | `demo/capture.sh` | builds the demo repo and records the real runs |
 | `demo/render.mjs` | draws the recording as a GIF |
+| `demo/svg.mjs` | draws one captured run as the SVG above |
 
 ```bash
 npm test
