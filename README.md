@@ -1,4 +1,4 @@
-# jevmerge
+# Hunkpick
 
 Resolves git merge conflicts by generating the possible resolutions and having a model
 pick one.
@@ -9,7 +9,7 @@ choose between. The model selects a candidate. It does not write code, so it can
 produce a file that fails to parse. It can pick the wrong candidate, which you catch by
 reading the diff.
 
-![jevmerge resolving four conflicts](demo/jevmerge.gif)
+![hunkpick resolving four conflicts](demo/hunkpick.gif)
 
 The clip runs it against four conflicts. It resolves three and leaves the fourth.
 `demo/capture.sh` builds the repo and runs the commands, `demo/render.mjs` draws the
@@ -25,8 +25,8 @@ Requires Node 20+, git, and a [TypeSafe](https://typesafe.ai) API key. No runtim
 dependencies; the tool imports only Node built-ins.
 
 ```bash
-git clone https://github.com/hfnissum-byte/jevmerge.git
-cd jevmerge
+git clone https://github.com/hfnissum-byte/hunkpick.git
+cd hunkpick
 cp .env.example .env        # add your key
 node test/run.mjs           # 46 offline tests, no API calls
 ```
@@ -34,8 +34,8 @@ node test/run.mjs           # 46 offline tests, no API calls
 In a repository with conflicts:
 
 ```bash
-node /path/to/jevmerge/jevmerge.mjs            # report only
-node /path/to/jevmerge/jevmerge.mjs --apply    # write the resolutions that pass the gates
+node /path/to/hunkpick/hunkpick.mjs            # report only
+node /path/to/hunkpick/hunkpick.mjs --apply    # write the resolutions that pass the gates
 ```
 
 Without `--apply` nothing is modified. Nothing is staged or committed in either case.
@@ -43,7 +43,7 @@ Unresolved conflicts keep their markers.
 
 ## Output
 
-![jevmerge output for four conflicts](demo/output.svg)
+![hunkpick output for four conflicts](demo/output.svg)
 
 | field | meaning |
 | --- | --- |
@@ -82,7 +82,7 @@ Two conflicts in the sample were left:
 
 ### 1. Rebuild the conflict with its base
 
-The working-tree file contains both sides but not the common ancestor. jevmerge reads
+The working-tree file contains both sides but not the common ancestor. hunkpick reads
 git's index stages (`:1:` base, `:2:` ours, `:3:` theirs) and runs
 `git merge-file --diff3` on them, which gives each hunk its base. The working tree is not
 modified.
@@ -158,7 +158,7 @@ Exit codes: `0` all resolved, `1` some left, `2` nothing to do or an error.
 ## Benchmark
 
 `bench/replay.mjs` replays merges from a real repository. For each merge commit it checks
-out the first parent, merges the second, runs jevmerge, and compares the result to the
+out the first parent, merges the second, runs hunkpick, and compares the result to the
 merge commit's tree.
 
 ```bash
@@ -249,7 +249,7 @@ The gate therefore sums probability across candidates of the same kind, which is
 
 | Path | |
 | --- | --- |
-| `jevmerge.mjs` | CLI: generate, judge, gate, write, report |
+| `hunkpick.mjs` | CLI: generate, judge, gate, write, report |
 | `lib/git.mjs` | index stages, diff3 reconstruction, branch context |
 | `lib/conflicts.mjs` | conflict marker parsing and rendering |
 | `lib/candidates.mjs` | three-way merge over lines and tokens |
@@ -269,5 +269,5 @@ npm test
 
 ## Credentials
 
-`TYPESAFE_API_KEY` in a `.env` file next to `jevmerge.mjs`, or in the environment. `.env`
+`TYPESAFE_API_KEY` in a `.env` file next to `hunkpick.mjs`, or in the environment. `.env`
 is gitignored; see `.env.example`.
