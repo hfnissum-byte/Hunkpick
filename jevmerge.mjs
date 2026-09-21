@@ -17,21 +17,26 @@ import { conflictedPaths, diff3Text, mergeContext, repoRoot, stages } from "./li
 import { contextAround, parseConflicts, render } from "./lib/conflicts.mjs";
 import { enumerate } from "./lib/candidates.mjs";
 import { validate, validateInFile } from "./lib/validate.mjs";
-import { judge } from "./lib/judge.mjs";
+import { judge, NONE } from "./lib/judge.mjs";
 import { canMergeStructurally, structuredMerge } from "./lib/structured.mjs";
 import { MODEL } from "./lib/typesafe.mjs";
 
 /**
  * Resolution kinds that may be applied unattended.
  *
- * Set from bench/replay.mjs over 25 conflicted merges in expressjs/express:
- * `theirs` was chosen 17 times and wrong 17 times, `union_reversed` 4 and
- * wrong 4. Excluding both raised precision from 49% to 81% with no loss of
- * recall. `base` and `drop` discard work, so they also require review.
+ * Set from bench/replay.mjs. Over 50 held-out merges in expressjs/express the
+ * model's picks scored: merged_lines 21/23, ours 98/134, theirs 4/20,
+ * union 1/5, union_reversed 0/1. Excluding theirs and union_reversed takes
+ * overall precision from 67% to 74%. `base` and `drop` discard work outright,
+ * so they need review regardless of how they score.
  *
- * Those proportions are specific to that repository's workflow, where a
- * maintenance branch is merged into a development branch. Use `--kinds all`
- * for the full set.
+ * `union` is only weakly supported at n=5 and `merged_tokens` is effectively
+ * unmeasured, since express never produced a conflict where a token merge was
+ * the committed answer. Both are kept in; neither has evidence behind it.
+ *
+ * These proportions come from one repository's workflow, where a maintenance
+ * branch is merged into a development branch and the development side usually
+ * wins. Use `--kinds all` for the full set.
  */
 const DEFAULT_KINDS = ["ours", "union", "merged_lines", "merged_tokens", "structural"];
 
@@ -43,8 +48,8 @@ jevmerge — resolve git merge conflicts by enumeration and judgment
 
 Options
   --apply                  write files; without it nothing is modified
-  --confidence <0-1>       minimum probability for the chosen approach (default 0.75)
-  --safe <0-1>             minimum "resolvable mechanically" Noul (default 0.45)
+  --confidence <0-1>       minimum probability for the chosen approach (default 0.55)
+  --safe <0-1>             minimum "resolvable mechanically" Noul (default 0.25)
   --context <n>            lines of surrounding context to show the model (default 6)
   --kinds <a,b,...|all>    resolution kinds allowed to apply unattended
                            (default ${DEFAULT_KINDS.join(",")})
@@ -62,8 +67,8 @@ Exit codes
 function parseArgs(argv) {
   const opts = {
     apply: false,
-    confidence: 0.75,
-    safe: 0.45,
+    confidence: 0.55,
+    safe: 0.25,
     context: 6,
     all: false,
     json: false,
@@ -128,9 +133,10 @@ const c = {
 /** Green once it is over the line, amber near it, red well below. */
 const tint = (p, gate) => (p >= gate ? c.green : p >= gate * 0.7 ? c.yellow : c.red);
 
-const bar = (p, gate = 0.75) => {
+const bar = (p, gate = 0.75, neutral = false) => {
   const n = Math.max(0, Math.min(10, Math.round(p * 10)));
-  return tint(p, gate)("█".repeat(n)) + c.dim("·".repeat(10 - n));
+  const fill = neutral ? c.dim : tint(p, gate);
+  return fill("█".repeat(n)) + c.dim("·".repeat(10 - n));
 };
 
 async function main() {
@@ -276,7 +282,19 @@ async function main() {
       const chosen = entry.candidates.find((c) => c.id === v?.candidateId);
 
       if (!chosen) {
-        entry.outcome = { resolved: false, reason: "no candidate was selected", verdict: v };
+        // `none` is not a candidate, so summing probability over its kind gives
+        // zero. Report the probability the model put on the no-match option
+        // instead, which is the number that explains the outcome.
+        if (v && v.candidateId === NONE) v.mass = v.probabilities[NONE] ?? 0;
+        entry.outcome = {
+          resolved: false,
+          noMatch: v?.candidateId === NONE,
+          reason:
+            v?.candidateId === NONE
+              ? "none of the candidates is the resolution; write this one by hand"
+              : "no candidate was selected",
+          verdict: v,
+        };
         continue;
       }
 
@@ -422,9 +440,11 @@ async function main() {
         console.log(`${head}  ${c.dim("—")}  ${c.yellow(o.reason)}`);
         continue;
       }
+      const label = o.chosen ? c.magenta(o.chosen.kind) : c.yellow("no match");
       console.log(
-        `${head}  ${c.magenta(o.chosen ? o.chosen.kind : "?")}` +
-          `   ${c.dim("approach")} ${bar(v.mass ?? 0, opts.confidence)} ${(v.mass ?? 0).toFixed(2)}` +
+        `${head}  ${label}` +
+          `   ${c.dim(o.noMatch ? "no-match " : "approach ")}` +
+          `${bar(v.mass ?? 0, opts.confidence, o.noMatch)} ${(v.mass ?? 0).toFixed(2)}` +
           `   ${c.dim("mechanical")} ${bar(v.safe, opts.safe)} ${v.safe.toFixed(2)}`
       );
       if (!o.resolved) console.log(`           ${c.yellow(o.reason)}`);

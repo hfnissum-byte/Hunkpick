@@ -38,10 +38,11 @@ const CLI = join(HERE, "..", "jevmerge.mjs");
 const ANCHOR = 4;
 
 function parseArgs(argv) {
-  const o = { repo: null, max: 30, out: null, confidence: 0.75, safe: 0.45, kinds: null };
+  const o = { repo: null, max: 30, skip: 0, out: null, confidence: 0.55, safe: 0.25, kinds: null };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--repo") o.repo = argv[++i];
     else if (argv[i] === "--max") o.max = Number(argv[++i]);
+    else if (argv[i] === "--skip") o.skip = Number(argv[++i]);
     else if (argv[i] === "--out") o.out = argv[++i];
     else if (argv[i] === "--confidence") o.confidence = Number(argv[++i]);
     else if (argv[i] === "--safe") o.safe = Number(argv[++i]);
@@ -105,11 +106,11 @@ function resetRepo(repo) {
   throw new Error("could not get the clone back onto a branch");
 }
 
-function conflictedMerges(repo, limit) {
+function conflictedMerges(repo, limit, skip = 0) {
   const merges = git(repo, ["rev-list", "--merges", "HEAD"]).split("\n").filter(Boolean);
   const out = [];
   for (const m of merges) {
-    if (out.length >= limit) break;
+    if (out.length >= limit + skip) break;
     let p1;
     let p2;
     try {
@@ -127,7 +128,7 @@ function conflictedMerges(repo, limit) {
     git(repo, ["merge", "--abort"], true);
     git(repo, ["reset", "-q", "--hard"], true);
   }
-  return out;
+  return out.slice(skip);
 }
 
 /** Every start index where `needle` occurs in `hay`, at or after `from`. */
@@ -256,6 +257,11 @@ function scoreFile(repo, path, truth, fileReport) {
     const survivors = enumerate(part).filter((c) => validateInFile(path, parts, part.id, c.lines).ok);
     const match = survivors.find((c) => sameLines(c.lines, human));
 
+    // pickCorrect is scored whether or not the gates let it through. Without
+    // it there is no way to tell a wrong selection from a correct selection
+    // that a threshold blocked, and those need opposite fixes.
+    const pickCorrect = reported?.lines ? sameLines(reported.lines, human) : null;
+
     rows.push({
       path,
       route: "line",
@@ -264,7 +270,11 @@ function scoreFile(repo, path, truth, fileReport) {
       reachable: !!match,
       correctKind: match?.kind ?? null,
       claimed: !!reported?.resolved,
-      correct: reported?.resolved ? sameLines(reported.lines ?? [], human) : null,
+      pickCorrect,
+      mass: reported?.approach_mass ?? null,
+      safe: reported?.safe ?? null,
+      gateReason: reported?.reason ?? null,
+      correct: reported?.resolved ? pickCorrect : null,
       chosenKind: reported?.kind ?? null,
     });
   });
@@ -286,7 +296,7 @@ function main() {
 
   const branch = resetRepo(repo);
   process.stderr.write(`on ${branch}; finding merges that actually conflicted…\n`);
-  const cases = conflictedMerges(repo, opts.max);
+  const cases = conflictedMerges(repo, opts.max, opts.skip);
   process.stderr.write(`${cases.length} conflicted merges\n\n`);
 
   const rows = [];
@@ -401,15 +411,49 @@ function printReport(rows, usage, requests, opts) {
     }
   }
 
-  const missedKinds = {};
-  for (const r of reachable.filter((x) => !x.claimed)) {
-    missedKinds[r.correctKind ?? "?"] = (missedKinds[r.correctKind ?? "?"] ?? 0) + 1;
-  }
-  if (Object.keys(missedKinds).length) {
+  // The whole diagnosis: of the reachable regions it did not resolve, how many
+  // did the model get right and a threshold throw away, and how many did the
+  // model get wrong. The first is a gate problem, the second is a prompt
+  // problem, and they do not share a fix.
+  const missed = reachable.filter((r) => !r.claimed);
+  const blocked = missed.filter((r) => r.pickCorrect === true);
+  const mispicked = missed.filter((r) => r.pickCorrect === false);
+
+  if (missed.length) {
     L("");
-    L("Left for a human, though the answer was available:");
-    for (const [k, n] of Object.entries(missedKinds).sort((a, b) => b[1] - a[1])) {
-      L(`  ${k.padEnd(18)} ${n}`);
+    L(`Reachable but not resolved (${missed.length}):`);
+    L(`  model picked right, gate blocked it  ${blocked.length}  ${pct(blocked.length, missed.length)}   <- gate`);
+    L(`  model picked the wrong candidate     ${mispicked.length}  ${pct(mispicked.length, missed.length)}   <- selection`);
+
+    if (blocked.length) {
+      const why = {};
+      for (const r of blocked) {
+        const k = (r.gateReason ?? "?").replace(/[\d.]+/g, "N");
+        why[k] = (why[k] ?? 0) + 1;
+      }
+      L("");
+      L("  What blocked a correct pick:");
+      for (const [k, n] of Object.entries(why).sort((a, b) => b[1] - a[1])) {
+        L(`    ${String(n).padStart(3)}  ${k}`);
+      }
+      const masses = blocked.map((r) => r.mass).filter((x) => x != null).sort((a, b) => a - b);
+      const safes = blocked.map((r) => r.safe).filter((x) => x != null).sort((a, b) => a - b);
+      const span = (a) => (a.length ? `${a[0].toFixed(2)} – ${a[a.length - 1].toFixed(2)}` : "—");
+      L(`    approach on correct-but-blocked picks: ${span(masses)}`);
+      L(`    mechanical on the same:                ${span(safes)}`);
+    }
+
+    if (mispicked.length) {
+      const pairs = {};
+      for (const r of mispicked) {
+        const k = `${r.correctKind ?? "?"} -> ${r.chosenKind ?? "?"}`;
+        pairs[k] = (pairs[k] ?? 0) + 1;
+      }
+      L("");
+      L("  Wrong selections, as should-have -> did:");
+      for (const [k, n] of Object.entries(pairs).sort((a, b) => b[1] - a[1]).slice(0, 8)) {
+        L(`    ${String(n).padStart(3)}  ${k}`);
+      }
     }
   }
 

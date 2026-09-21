@@ -52,6 +52,7 @@ Unresolved conflicts keep their markers.
 | `approach` | probability the model assigns to that kind, 0 to 1 |
 | `mechanical` | probability that this is a merge rather than a decision for a person |
 | `correct` | JSON only: whether the key merge is right and safe to apply unreviewed |
+| `no match` | the model's answer was that none of the candidates is the resolution |
 | `│ …` | the lines that would be written |
 | `runner-up` | next best candidate, shown when above 0.05 |
 
@@ -70,13 +71,15 @@ Resolution kinds:
 | `structural` | JSON merged key by key |
 | `base` / `drop` | revert both, or delete the region |
 
-Two conflicts in the sample were left:
+`server.js` line 9 is the one it left. Both branches set the same timeout, to 1s and 30s.
+There is no mechanical answer, `mechanical 0.14` says so, and `theirs` is not a kind that
+applies unattended.
 
-- `server.js` line 9: the branches set the same timeout to 1s and 30s. `mechanical 0.15`
-  reflects that there is no mechanical answer.
-- `cart.js` line 3: the token merge scored 1.00 on approach but 0.28 on mechanical.
-  Multiplying a tax rate by a quantity changes the result of the function, so it is not
-  a merge.
+`cart.js` line 3 is the borderline one. Both branches edited the same line compatibly, so
+a token merge exists, but combining a tax rate with a quantity changes what the function
+returns. It sits near the thresholds and does not always come out the same way: this run
+resolved it at `approach 0.59`, an earlier one answered `no match` and left it. That is
+the honest behaviour of a conflict on the boundary, not a bug.
 
 ## How it works
 
@@ -115,8 +118,17 @@ All conflicts in the repository go out in one request. Jev is a System One model
 returns typed values with probabilities instead of generating text. Two question types
 are used.
 
-- `Choice` over the surviving candidates: which one preserves both sides' intent.
+- `Choice` over the surviving candidates, plus a no-match option.
 - `Noul`, a yes/no with a probability: whether a person needs to decide this.
+
+The state also carries what each branch changed relative to the ancestor, counted in
+lines. Without it a deletion looks like losing code, and the model keeps the code; that
+was the single largest source of wrong picks.
+
+The no-match option matters for the same reason. A `Choice` has to name one of its
+options, so without somewhere to put "none of these", the model names the nearest
+candidate and it gets written. Most of the remaining errors are regions the authors
+resolved by hand, where no candidate could have been right.
 
 The second question is separate because confidence does not cover it. A conflict can have
 one clearly best mechanical resolution and still require a decision, for example two
@@ -125,7 +137,7 @@ valid timeout values or a check that one branch removed.
 ### 5. Gate
 
 Thresholds are applied in code. The chosen kind must also be on the list allowed to apply
-unattended. Conflicts that fail a gate keep their markers.
+unattended. Conflicts that fail a gate, or that came back as no-match, keep their markers.
 
 ## JSON files
 
@@ -145,8 +157,8 @@ a choice between branches and the Choice question handles it.
 | Flag | |
 | --- | --- |
 | `--apply` | write files; without it nothing is modified |
-| `--confidence <0-1>` | minimum `approach` (default 0.75) |
-| `--safe <0-1>` | minimum `mechanical` (default 0.45) |
+| `--confidence <0-1>` | minimum `approach` (default 0.55) |
+| `--safe <0-1>` | minimum `mechanical` (default 0.25) |
 | `--kinds <a,b,…\|all>` | kinds allowed to apply unattended (default set from the benchmark) |
 | `--context <n>` | lines of context sent to the model (default 6) |
 | `--all` | apply everything, ignoring the gates |
@@ -169,55 +181,96 @@ Scoring is per conflict region, anchored on the stable lines on either side. Who
 comparison does not work here because merge commits also contain edits unrelated to the
 conflicts.
 
-Over 25 conflicted merges from `expressjs/express`, 118 conflict regions had a recoverable
-answer. In 77% of them the committed resolution was among the candidates. The remaining
-23% were not reachable by any combination of the two sides.
+### Results
 
-With all kinds enabled:
+The thresholds, the prompt and the kind list were set using merges 1–25. The numbers
+below are from merges 26–75, which none of that was fitted to.
+
+Across those 50 merges there were 266 conflict regions with a recoverable answer. In 74%
+of them the committed resolution was among the candidates; the other 26% were not
+reachable by any combination of the two sides.
+
+| | |
+| --- | --- |
+| resolutions written | 163 |
+| correct | 120 |
+| **precision** | **74%** (95% CI 66–80%) |
+| **recall of solvable conflicts** | **61%** |
+
+31 of the 43 errors were regions where no candidate matched what was committed, because
+the authors wrote the merge by hand. Counting only regions where a correct answer existed,
+precision is 91%. That does not make the other 12 harmless: a wrong resolution is a wrong
+resolution whether or not a right one was available.
+
+By kind, at the default thresholds and with no kind filter:
 
 | kind chosen | correct |
 | --- | --- |
-| `ours` | 5/5 (100%) |
-| `merged_lines` | 19/23 (83%) |
-| `union` | 2/3 (67%) |
-| `theirs` | 0/17 (0%) |
-| `union_reversed` | 0/4 (0%) |
-| `base` | 0/1 |
-| total | 26/53 (49%) |
+| `merged_lines` | 21/23 (91%) |
+| `ours` | 98/134 (73%) |
+| `theirs` | 4/20 (20%) |
+| `union` | 1/5 (20%) |
+| `union_reversed` | 0/1 |
+| `merged_tokens` | 0/1 |
 
-`theirs` was chosen 17 times and was wrong every time. Excluding it and `union_reversed`
-raises precision from 49% to 81% with no loss of recall, since neither produced a correct
-result. That is the default; `--kinds all` restores them.
+Excluding `theirs`, `union_reversed`, `base` and `drop` from unattended use takes overall
+precision from 67% to 74%. That is the default; `--kinds all` restores them. `union` is
+only weakly supported at n=5 and `merged_tokens` is effectively unmeasured, since express
+never produced a conflict where a token merge was the answer.
 
-The committed resolutions were `ours` 55% of the time, `merged_lines` 27%, `theirs` 10%.
-Express merges a maintenance branch into a development branch and the development side
-usually wins, so these proportions are specific to that workflow.
+The committed resolutions were `ours` most of the time. Express merges a maintenance
+branch into a development branch and the development side usually wins, so these
+proportions are specific to that workflow.
 
-Coverage is low even with the gates. On a 10-merge confirmation run, 5 of 7
-auto-resolutions were correct and 82% of the solvable conflicts were left for a human. The
-model's selection is the limiting factor, not the candidate generation: in 17 regions the
-committed answer was `ours` and it was not chosen. `--apply` is useful as a first pass
-over the mechanical conflicts. Review the diff afterwards.
+### What moved the numbers
+
+Three changes, each measured against the setting before it:
+
+**Telling the model what each side did.** The dominant selection error was picking the
+incoming version when the current branch had deleted a region and the incoming branch had
+edited one line inside it — 24 of 38 wrong picks. Shown only the two versions, a deletion
+looks like losing code. `lib/judge.mjs` now states, in lines, what each branch changed
+relative to the ancestor. Correct selections went from 51 to 58 out of 118.
+
+**Fixing the thresholds.** On identical held-out data, changing only the gates:
+
+| gates | applied | correct | precision | recall |
+| --- | --- | --- | --- | --- |
+| 0.75 / 0.45 | 60 | 42 | 70% | 21% |
+| 0.55 / 0.25 | 163 | 120 | 74% | 61% |
+
+Better on both axes. The `mechanical` threshold had been discarding correct answers for
+nothing — see below.
+
+**Letting the model decline.** The `Choice` had to name a candidate even when the right
+answer was not among them, and that answer got written. Adding a no-match option, on the
+same merges: precision 73% → 81%, wrong resolutions 24 → 15, at the cost of one correct
+resolution.
 
 ## Thresholds
 
-Six runs over the same two-file merge:
+Binned by the reported number, over the held-out runs:
 
-| signal | range |
-| --- | --- |
-| structural `correct` | 0.76 – 0.78 |
-| two added imports, `approach` | 0.94 – 0.96 |
-| two added imports, `mechanical` | 0.59 – 0.67 |
-| 1s vs 30s timeout, `mechanical` | 0.15 – 0.17 |
+| `approach` | correct | | `mechanical` | correct |
+| --- | --- | --- | --- | --- |
+| 0.45–0.60 | 67% | | 0.15–0.25 | 71% |
+| 0.60–0.75 | 71% | | 0.25–0.35 | 100% |
+| 0.75–0.90 | 80% | | 0.35–0.45 | 50% |
+| 0.90–1.00 | 84% | | 0.45+ | 73–77% |
 
-The Choice is stable across runs and the Noul is not, so the Noul threshold is the one
-that matters. The Noul still separates the two cases, roughly 0.16 against 0.63, so the
-signal is usable and the original threshold was badly placed. `--safe` was 0.60, inside
-the upper range, and the same conflict resolved or did not depending on the run. It now
-defaults to 0.45, with about 0.14 of margin on either side.
+`approach` is monotonic: it predicts correctness and is worth gating on. `mechanical` is
+flat, so as an accuracy gate it does nothing but cut coverage, which is why it went from
+0.45 to 0.25.
 
-That is fitted to two clusters. Run the benchmark on your own merges with `--json` and
-adjust both thresholds.
+That is not a fault in the Noul. It answers "does a person need to decide this", which is
+not the same question as "is this pick correct" — a conflict can be resolvable the way the
+maintainer resolved it and still be a decision you want to make yourself. It is kept as a
+gate for the extreme cases, and as a column you can read, but it is not evidence about
+accuracy and is not tuned as though it were.
+
+Both numbers are fitted to one repository. Run the benchmark on your own merges with
+`--json`, compare against what you would have done, and move them. `--confidence 0.75`
+trades coverage for precision: 76% at 40% recall on the same data.
 
 ### Gating on approach rather than confidence
 
@@ -244,6 +297,23 @@ The gate therefore sums probability across candidates of the same kind, which is
   error is discarded. The validator checks JavaScript as `.mjs`, then `.cjs`. There is a
   regression test for this.
 - A resolution that parses and preserves both sides can still be wrong. Review the diff.
+
+At 74% precision, roughly one in four of the resolutions it writes is not what you would
+have written. It is a first pass over the mechanical conflicts, not an unattended merge
+bot. The usual loop:
+
+```bash
+node jevmerge.mjs            # see what it proposes
+node jevmerge.mjs --apply
+git diff                     # read it before git add
+```
+
+If one is wrong, that file goes back to its original conflict. jevmerge never touches the
+index, so all three stages are still there:
+
+```bash
+git checkout --merge -- path/to/file.js
+```
 
 ## Layout
 

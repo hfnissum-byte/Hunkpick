@@ -6,7 +6,7 @@
  */
 
 import { parseConflicts, render, contextAround } from "../lib/conflicts.mjs";
-import { enumerate, threeWay, tokenize } from "../lib/candidates.mjs";
+import { diffStat, enumerate, threeWay, tokenize } from "../lib/candidates.mjs";
 import { validate } from "../lib/validate.mjs";
 import { structuredMerge } from "../lib/structured.mjs";
 
@@ -145,6 +145,27 @@ check("offers both orders for two insertions at one point", () => {
   eq(got.length, 2, "expected two orderings");
   eq(got[0], ["a", "OURS", "THEIRS", "z"]);
   eq(got[1], ["a", "THEIRS", "OURS", "z"]);
+});
+
+console.log("\ndiff stat");
+
+check("counts a pure deletion", () => {
+  eq(diffStat(["a", "b", "c"], []), { removed: 3, added: 0, unchanged: 0 });
+});
+
+check("counts a pure addition", () => {
+  eq(diffStat(["a"], ["a", "b"]), { removed: 0, added: 1, unchanged: 1 });
+});
+
+check("counts a one-line edit inside a block", () => {
+  // The case the model kept getting wrong: a small edit inside a region the
+  // other side deleted outright.
+  const base = ["a", "b", "c", "d"];
+  eq(diffStat(base, ["a", "b", "X", "d"]), { removed: 1, added: 1, unchanged: 3 });
+});
+
+check("reports no change when the sides match", () => {
+  eq(diffStat(["a", "b"], ["a", "b"]), { removed: 0, added: 0, unchanged: 2 });
 });
 
 console.log("\ntokenizer");
