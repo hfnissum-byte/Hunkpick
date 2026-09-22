@@ -30,12 +30,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/hfnissum-byte/hunkpick.git"
+    "url": "git+https://github.com/hfnissum-byte/Hunkpick.git"
   },
   "bugs": {
-    "url": "https://github.com/hfnissum-byte/hunkpick/issues"
+    "url": "https://github.com/hfnissum-byte/Hunkpick/issues"
   },
-  "homepage": "https://github.com/hfnissum-byte/hunkpick#readme",
+  "homepage": "https://github.com/hfnissum-byte/Hunkpick#readme",
   "author": "hfnissum-byte",
   "license": "ISC",
   "devDependencies": {
