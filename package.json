@@ -3,6 +3,12 @@
   "version": "0.1.0",
   "description": "Resolve git merge conflicts by enumeration and judgment: code enumerates every valid resolution, a model picks, code gates the pick.",
   "type": "module",
+  "files": [
+    "hunkpick.mjs",
+    "lib/",
+    "README.md",
+    "LICENSE"
+  ],
   "bin": {
     "hunkpick": "./hunkpick.mjs"
   },

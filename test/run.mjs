@@ -9,6 +9,15 @@ import { parseConflicts, render, contextAround } from "../lib/conflicts.mjs";
 import { diffStat, enumerate, threeWay, tokenize } from "../lib/candidates.mjs";
 import { validate } from "../lib/validate.mjs";
 import { structuredMerge } from "../lib/structured.mjs";
+import { COLOUR, truncate, width } from "../lib/ui.mjs";
+import {
+  createDecoder,
+  initialState,
+  keyToAction,
+  reduce,
+  renderScreen,
+  resolutions,
+} from "../lib/review.mjs";
 
 let failed = 0;
 let ran = 0;
@@ -383,6 +392,201 @@ check("declines a file type it does not understand", () => {
 
 check("declines when a stage is not valid json", () => {
   eq(structuredMerge(".json", "{", json({ a: 1 }), json({ a: 2 })), null);
+});
+
+console.log("\nreview: key decoding");
+
+check("decodes arrows, enter and ctrl-c", () => {
+  const d = createDecoder();
+  eq(d("[A").map(keyToAction), ["up"]);
+  eq(d("[B").map(keyToAction), ["down"]);
+  eq(d("\r").map(keyToAction), ["accept"]);
+  eq(d("").map(keyToAction), ["quit"]);
+});
+
+check("keeps a split escape sequence across chunks", () => {
+  // Raw stdin can deliver ESC and [A in separate reads. Handling the chunk as
+  // one key turns an arrow into a stray escape plus two letters, which only
+  // shows up over ssh or under load.
+  const d = createDecoder();
+  eq(d(""), []);
+  eq(d("[A").map(keyToAction), ["up"]);
+});
+
+check("splits several keys in one chunk", () => {
+  const d = createDecoder();
+  eq(d("jjk").map(keyToAction), ["down", "down", "up"]);
+});
+
+console.log("\nreview: state machine");
+
+const cand = (id, kind, lines) => ({ id, kind, lines });
+
+function decision(path, hunkId, kinds) {
+  const candidates = kinds.map((k, i) => cand(`c${i}`, k, [`${k} line`]));
+  return {
+    ref: {},
+    type: "hunk",
+    path,
+    hunkId,
+    line: 3,
+    hunk: { ours: ["ours"], base: ["base"], theirs: ["theirs"], hasBase: true },
+    context: { before: ["before"], after: ["after"] },
+    candidates,
+    probs: Object.fromEntries(candidates.map((c, i) => [c.id, i === 0 ? 0.6 : 0.2])),
+    verdict: { candidateId: "c0", safe: 0.5, probabilities: {} },
+    reason: null,
+    recommended: 0,
+    wouldApply: true,
+  };
+}
+
+const twoFiles = () => [
+  decision("a.js", "h0", ["ours", "theirs"]),
+  decision("a.js", "h1", ["ours", "union"]),
+  decision("b.js", "h0", ["ours", "theirs"]),
+];
+
+check("accept records the selected candidate and advances", () => {
+  let s = initialState(twoFiles());
+  s = reduce(s, "down");
+  s = reduce(s, "accept");
+  eq(s.choices[0], { action: "accept", candidate: 1 });
+  eq(s.at, 1);
+});
+
+check("skip records a decision that writes nothing", () => {
+  let s = reduce(initialState(twoFiles()), "skip");
+  eq(s.choices[0], { action: "skip" });
+  const { hunks } = resolutions(s);
+  eq(hunks.size, 0);
+});
+
+check("the cursor clamps instead of wrapping", () => {
+  let s = initialState(twoFiles());
+  s = reduce(reduce(reduce(s, "up"), "up"), "up");
+  eq(s.cursor, 0);
+  s = reduce(reduce(reduce(s, "down"), "down"), "down");
+  eq(s.cursor, 1);
+});
+
+check("undo returns to the decision and clears it", () => {
+  let s = initialState(twoFiles());
+  s = reduce(s, "accept");
+  s = reduce(s, "accept");
+  eq(s.at, 2);
+  s = reduce(s, "undo");
+  eq(s.at, 1);
+  eq(s.choices[1], null);
+});
+
+check("undo with nothing decided is a no-op", () => {
+  const s = initialState(twoFiles());
+  eq(reduce(s, "undo").at, 0);
+});
+
+check("next file skips the rest of the current one", () => {
+  let s = reduce(initialState(twoFiles()), "nextFile");
+  eq(s.at, 2);
+  eq(s.decisions[s.at].path, "b.js");
+  eq(s.choices[1], { action: "skip" });
+});
+
+check("deciding the last conflict finishes", () => {
+  let s = initialState(twoFiles());
+  s = reduce(reduce(reduce(s, "accept"), "accept"), "accept");
+  eq(s.done, true);
+});
+
+check("resolutions carries only what was accepted", () => {
+  let s = initialState(twoFiles());
+  s = reduce(s, "accept"); // a.js h0 -> c0
+  s = reduce(s, "skip"); // a.js h1
+  s = reduce(s, "down");
+  s = reduce(s, "accept"); // b.js h0 -> c1
+  const { hunks } = resolutions(s);
+  eq([...hunks.keys()].sort(), ["a.js", "b.js"]);
+  eq(hunks.get("a.js"), { h0: ["ours line"] });
+  eq(hunks.get("b.js"), { h0: ["theirs line"] });
+});
+
+check("a conflict with no candidates cannot be accepted into a write", () => {
+  const d = decision("a.js", "h0", []);
+  let s = reduce(initialState([d]), "accept");
+  eq(s.choices[0], { action: "skip" });
+  eq(resolutions(s).hunks.size, 0);
+});
+
+console.log("\nreview: rendering");
+
+const sizes = [
+  { columns: 80, rows: 24 },
+  { columns: 120, rows: 40 },
+  { columns: 60, rows: 14 },
+  { columns: 44, rows: 10 },
+];
+
+check("a frame is always exactly as tall as the terminal", () => {
+  let s = initialState(twoFiles());
+  const states = [s, reduce(s, "down"), reduce(s, "accept"), reduce(reduce(s, "quit"), "quit")];
+  for (const st of states) {
+    for (const size of sizes) {
+      const lines = renderScreen(st, size);
+      eq(lines.length, size.rows, `rows for ${size.columns}x${size.rows}`);
+    }
+  }
+});
+
+check("no line can wrap, which would corrupt every row after it", () => {
+  // The invariant that matters most: the driver repaints in place, so one
+  // wrapped line shifts the whole frame and never recovers.
+  let s = initialState(twoFiles());
+  const long = decision("x.js", "h0", ["ours"]);
+  long.hunk.ours = ["x".repeat(400)];
+  long.candidates[0].lines = ["y".repeat(400)];
+  const states = [s, reduce(s, "accept"), initialState([long])];
+  for (const st of states) {
+    for (const size of sizes) {
+      for (const line of renderScreen(st, size)) {
+        if (width(line) > size.columns) {
+          throw new Error(`${width(line)} > ${size.columns}: ${JSON.stringify(line.slice(0, 60))}`);
+        }
+      }
+    }
+  }
+});
+
+check("a terminal below the minimum says so instead of rendering garbage", () => {
+  const lines = renderScreen(initialState(twoFiles()), { columns: 44, rows: 10 });
+  if (!lines.join("\n").includes("too small")) throw new Error("no size warning");
+});
+
+check("the selected candidate is marked", () => {
+  const plain = renderScreen(initialState(twoFiles()), { columns: 80, rows: 24 }).join("\n");
+  if (!plain.includes("▸")) throw new Error("no selection marker");
+});
+
+check("NO_COLOR output carries no escape sequences", () => {
+  // COLOUR is read at module load, so this asserts the helpers are honest
+  // rather than re-importing under a different environment.
+  for (const line of renderScreen(initialState(twoFiles()), { columns: 80, rows: 24 })) {
+    if (!COLOUR && line.includes("[")) throw new Error(`escape leaked: ${JSON.stringify(line)}`);
+  }
+});
+
+console.log("\nui helpers");
+
+check("width ignores colour escapes", () => {
+  eq(width("[32mabc[0m"), 3);
+});
+
+check("truncate keeps within the budget", () => {
+  const out = truncate("abcdefghij", 5);
+  if (width(out) > 5) throw new Error(`${width(out)} > 5`);
+});
+
+check("truncate leaves a short string alone", () => {
+  eq(truncate("abc", 10), "abc");
 });
 
 console.log(`\n${ran - failed}/${ran} passed\n`);

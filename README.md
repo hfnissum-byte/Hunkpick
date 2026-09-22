@@ -1,5 +1,7 @@
 # Hunkpick
 
+[![test](https://github.com/hfnissum-byte/Hunkpick/actions/workflows/test.yml/badge.svg)](https://github.com/hfnissum-byte/Hunkpick/actions/workflows/test.yml)
+
 Resolves git merge conflicts by generating the possible resolutions and having a model
 pick one.
 
@@ -15,8 +17,9 @@ The clip runs it against four conflicts. It resolves three and leaves the fourth
 `demo/capture.sh` builds the repo and runs the commands, `demo/render.mjs` draws the
 captured output.
 
-**Contents:** [Quick start](#quick-start) · [Output](#output) · [How it works](#how-it-works) ·
-[JSON](#json-files) · [Options](#options) · [Benchmark](#benchmark) ·
+**Contents:** [Quick start](#quick-start) · [Output](#output) · [Review mode](#review-mode) ·
+[How it works](#how-it-works) · [JSON](#json-files) · [Options](#options) ·
+[Defaults](#before-you-trust-the-defaults) · [Benchmark](#benchmark) ·
 [Thresholds](#thresholds) · [Limits](#limits) · [Layout](#layout)
 
 ## Quick start
@@ -28,7 +31,7 @@ dependencies; the tool imports only Node built-ins.
 git clone https://github.com/hfnissum-byte/hunkpick.git
 cd hunkpick
 cp .env.example .env        # add your key
-node test/run.mjs           # 46 offline tests, no API calls
+node test/run.mjs           # 70 offline tests, no API calls
 ```
 
 In a repository with conflicts:
@@ -80,6 +83,44 @@ a token merge exists, but combining a tax rate with a quantity changes what the 
 returns. It sits near the thresholds and does not always come out the same way: this run
 resolved it at `approach 0.59`, an earlier one answered `no match` and left it. That is
 the honest behaviour of a conflict on the boundary, not a bug.
+
+## Review mode
+
+```bash
+node hunkpick.mjs --review
+```
+
+Walks the conflicts one at a time and writes only what you accept. The candidate the
+batch mode would have applied is pre-selected, so accepting everything reproduces
+`--apply` exactly.
+
+```
+  cart.js  ·  hunk 1 of 1, line 3  ·  1/4  (0 accepted, 0 skipped)
+
+        let sum = 0;
+  ──────────────────────────────────────────────────────────
+    base    sum += it.price;
+    ours    sum += it.price * it.qty;
+    theirs  sum += it.price * (1 + TAX);
+  ──────────────────────────────────────────────────────────
+        return sum;
+
+  ▸ merged_tokens  0.59  sum += it.price * it.qty * (1 + TAX);
+    ours           0.22  sum += it.price * it.qty;
+    theirs         0.19  sum += it.price * (1 + TAX);
+
+  mechanical ███······· 0.27   a person should decide this
+
+  [enter] accept   [j/k] candidate   [s] skip   [u] undo   [n] next file   [q] done
+```
+
+Nothing is written until you finish, and nothing is ever staged or committed. Skipped
+conflicts keep their markers. `--review` cannot be combined with `--apply`, `--json` or
+`--all`; those write or print unattended, which is the opposite intent.
+
+It needs a real terminal. Git Bash and mintty hand node a pipe rather than a console, so
+`--review` there falls back to the report and tells you to use `winpty`, Windows Terminal
+or PowerShell.
 
 ## How it works
 
@@ -157,6 +198,7 @@ a choice between branches and the Choice question handles it.
 | Flag | |
 | --- | --- |
 | `--apply` | write files; without it nothing is modified |
+| `--review` | step through the conflicts and write only what you accept |
 | `--confidence <0-1>` | minimum `approach` (default 0.55) |
 | `--safe <0-1>` | minimum `mechanical` (default 0.25) |
 | `--kinds <a,b,…\|all>` | kinds allowed to apply unattended (default set from the benchmark) |
@@ -166,6 +208,29 @@ a choice between branches and the Choice question handles it.
 | `--model <name>` | override the model |
 
 Exit codes: `0` all resolved, `1` some left, `2` nothing to do or an error.
+
+## Before you trust the defaults
+
+The thresholds and the kind allow-list were fitted to `expressjs/express`. They do not
+transfer. The same benchmark on two more repositories:
+
+| | express | django | requests |
+| --- | --- | --- | --- |
+| precision | 74% | 65% | 43% |
+| the committed answer was `ours` | 65% | 38% | 20% |
+| the committed answer was `theirs` | 8% | 15% | **40%** |
+
+Express merges a maintenance branch into a development branch, so the development side
+usually wins and `ours` dominates. `requests` merges pull requests into main, the opposite
+direction, and there `theirs` is the most common correct answer — while being excluded
+from the defaults, which leaves the tool structurally unable to get those right.
+
+The django and requests samples are small (23 and 7 resolutions) and their intervals
+overlap express's, so the precision difference is not statistically established. The
+mechanism behind it is not in doubt.
+
+**If your pull requests merge into main, start with `--kinds all`** and compare against
+what you would have done. `bench/replay.mjs` will do that on your own history.
 
 ## Benchmark
 
@@ -357,13 +422,16 @@ git checkout --merge -- path/to/file.js
 | `lib/candidates.mjs` | three-way merge over lines and tokens |
 | `lib/structured.mjs` | three-way merge over JSON keys |
 | `lib/validate.mjs` | per-extension syntax checks |
+| `lib/ui.mjs` | colour and width helpers, shared by the report and the review UI |
+| `lib/review.mjs` | interactive review: queue, state machine, rendering, terminal driver |
 | `lib/judge.mjs` | builds and sends the request |
-| `test/run.mjs` | 46 offline tests, no git or API |
+| `test/run.mjs` | 70 offline tests, no git, no API, no terminal |
 | `bench/replay.mjs` | replays merges and scores against the commit |
 | `bench/inspect.mjs` | dumps one conflict with its candidates and the committed answer |
 | `demo/capture.sh` | builds the demo repo and records the runs |
 | `demo/render.mjs` | renders a recording as a GIF |
 | `demo/svg.mjs` | renders one run as the SVG above |
+| `bench/compare.mjs` | puts runs from different repositories side by side |
 
 ```bash
 npm test

@@ -20,6 +20,8 @@ import { validate, validateInFile } from "./lib/validate.mjs";
 import { judge, NONE } from "./lib/judge.mjs";
 import { canMergeStructurally, structuredMerge } from "./lib/structured.mjs";
 import { MODEL } from "./lib/typesafe.mjs";
+import { bar, c, tint } from "./lib/ui.mjs";
+import { buildDecisions, drive, initialState } from "./lib/review.mjs";
 
 /**
  * Resolution kinds that may be applied unattended.
@@ -48,6 +50,7 @@ hunkpick — resolve git merge conflicts by enumeration and judgment
 
 Options
   --apply                  write files; without it nothing is modified
+  --review                 step through the conflicts and write what you accept
   --confidence <0-1>       minimum probability for the chosen approach (default 0.55)
   --safe <0-1>             minimum "resolvable mechanically" Noul (default 0.25)
   --context <n>            lines of surrounding context to show the model (default 6)
@@ -67,6 +70,7 @@ Exit codes
 function parseArgs(argv) {
   const opts = {
     apply: false,
+    review: false,
     confidence: 0.55,
     safe: 0.25,
     context: 6,
@@ -84,6 +88,7 @@ function parseArgs(argv) {
     };
     switch (a) {
       case "--apply": opts.apply = true; break;
+      case "--review": opts.review = true; break;
       case "--all": opts.all = true; break;
       case "--json": opts.json = true; break;
       case "--confidence": opts.confidence = num("confidence"); break;
@@ -101,6 +106,13 @@ function parseArgs(argv) {
         throw new Error(`Unknown option: ${a}`);
     }
   }
+
+  // --review writes only what you accept; --apply writes unattended. Refusing
+  // is clearer than silently picking one.
+  if (opts.review && opts.apply) throw new Error("--review and --apply do different things; pick one");
+  if (opts.review && opts.json) throw new Error("--review is interactive, --json is not");
+  if (opts.review && opts.all) throw new Error("--all disables the gates, which --review does not use");
+
   return opts;
 }
 
@@ -110,34 +122,6 @@ function matchEol(text, original) {
   const lf = (original.match(/(?<!\r)\n/g) ?? []).length;
   return crlf > lf ? text.replace(/\r?\n/g, "\r\n") : text;
 }
-
-/**
- * Colour on a TTY, plain text otherwise. NO_COLOR disables it; FORCE_COLOR=1
- * forces it on, which is how the demo capture gets colour through a pipe.
- */
-const COLOUR =
-  !process.env.NO_COLOR && (process.env.FORCE_COLOR === "1" || process.stdout.isTTY === true);
-
-const wrap = (code) => (s) => (COLOUR ? `\u001b[${code}m${s}\u001b[0m` : String(s));
-const c = {
-  green: wrap(32),
-  yellow: wrap(33),
-  red: wrap(31),
-  blue: wrap(94),
-  magenta: wrap(35),
-  cyan: wrap(36),
-  dim: wrap(90),
-  bold: wrap(1),
-};
-
-/** Green once it is over the line, amber near it, red well below. */
-const tint = (p, gate) => (p >= gate ? c.green : p >= gate * 0.7 ? c.yellow : c.red);
-
-const bar = (p, gate = 0.75, neutral = false) => {
-  const n = Math.max(0, Math.min(10, Math.round(p * 10)));
-  const fill = neutral ? c.dim : tint(p, gate);
-  return fill("█".repeat(n)) + c.dim("·".repeat(10 - n));
-};
 
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
@@ -329,6 +313,56 @@ async function main() {
     }
   }
 
+  // ---- review --------------------------------------------------------------
+
+  // Review overrides the gate rather than replacing it: the gate still runs,
+  // and what it decided is what the screen shows as the recommendation, so
+  // accepting everything reproduces --apply exactly.
+  // Git Bash and mintty hand node a pipe rather than a console, so isTTY is
+  // false there even though a person is watching. Fall back to the report and
+  // say what to do instead, rather than failing: a CI job that inherited
+  // --review should still get something useful.
+  const interactive =
+    process.stdin.isTTY &&
+    process.stdout.isTTY &&
+    typeof process.stdin.setRawMode === "function";
+
+  if (opts.review && !interactive) {
+    console.error(
+      "--review needs a terminal, and this stdin is not one." +
+        "\nIn Git Bash try:  winpty node hunkpick.mjs --review" +
+        "\nOr run it from Windows Terminal or PowerShell." +
+        "\nShowing the report instead; nothing will be written."
+    );
+    opts.review = false;
+  }
+
+  if (opts.review) {
+
+    const decisions = buildDecisions(files);
+    if (!decisions.length) {
+      console.log("Nothing to review.");
+      return 2;
+    }
+
+    const reviewed = await drive(initialState(decisions));
+
+    // Translate the choices back onto the entries the write path already
+    // reads, so review and batch mode share one way of writing a file.
+    reviewed.choices.forEach((choice, i) => {
+      const d = decisions[i];
+      const accepted = choice?.action === "accept";
+      d.ref.outcome = {
+        ...(d.ref.outcome ?? {}),
+        resolved: accepted,
+        reason: accepted ? "accepted in review" : choice ? "skipped in review" : "not reviewed",
+        ...(accepted && d.type === "hunk" ? { chosen: d.candidates[choice.candidate] } : {}),
+      };
+    });
+
+    // Accepting is the instruction to write; there is no second confirmation.
+    opts.apply = true;
+  }
   // ---- write ---------------------------------------------------------------
 
   const touched = [];

@@ -1,0 +1,33 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    # The suite is offline: no git fixtures, no API key, no network. It covers
+    # the logic that decides what gets written into someone's file, which is
+    # the part worth gating a merge on.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows is in the matrix because the syntax checks shell out to node
+        # and python, and the write path has to preserve CRLF line endings.
+        os: [ubuntu-latest, windows-latest]
+        node: [20, 22]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Check the CLI parses and runs
+        run: node hunkpick.mjs --help
+
+      - name: Tests
+        run: npm test
