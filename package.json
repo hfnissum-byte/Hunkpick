@@ -10,7 +10,7 @@
     "LICENSE"
   ],
   "bin": {
-    "hunkpick": "./hunkpick.mjs"
+    "hunkpick": "hunkpick.mjs"
   },
   "scripts": {
     "test": "node test/run.mjs",
