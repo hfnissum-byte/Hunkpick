@@ -561,6 +561,18 @@ check("a terminal below the minimum says so instead of rendering garbage", () =>
   if (!lines.join("\n").includes("too small")) throw new Error("no size warning");
 });
 
+check("a no-match answer is stated above the candidates, not buried", () => {
+  const d = decision("a.js", "h0", ["ours", "theirs"]);
+  d.noMatch = true;
+  d.wouldApply = false;
+  d.reason = "none of the candidates is the resolution; write this one by hand";
+  const text = renderScreen(initialState([d]), { columns: 92, rows: 26 }).join("\n");
+  if (!text.includes("none of these is the resolution")) throw new Error("no banner");
+  // The candidates stay visible: overriding the model is the point of review.
+  if (!text.includes("ours")) throw new Error("candidates hidden");
+  if (text.includes("batch mode would leave this")) throw new Error("reason repeated below");
+});
+
 check("the selected candidate is marked", () => {
   const plain = renderScreen(initialState(twoFiles()), { columns: 80, rows: 24 }).join("\n");
   if (!plain.includes("▸")) throw new Error("no selection marker");

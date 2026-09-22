@@ -3,7 +3,7 @@
 # commands, and save their real output for demo/render.mjs to draw.
 #
 #   bash demo/capture.sh /tmp/hunkpick-demo
-#   node demo/render.mjs /tmp/hunkpick-demo/cap demo/hunkpick.gif
+#   FORCE_COLOR=1 node demo/review-gif.mjs /tmp/hunkpick-demo/repo demo/review.gif
 #
 # The four shapes, one per mechanism:
 #   cart.js       both sides changed one line compatibly   -> token merge
@@ -128,5 +128,6 @@ sed -n '1,4p' server.js > "$OUT/cap/04.txt" 2>&1
 
 echo "captured to $OUT/cap"
 echo
-echo "  node demo/render.mjs $OUT/cap demo/hunkpick.gif"
 echo "  node demo/svg.mjs    $OUT/cap/dry.txt demo/output.svg"
+echo "  FORCE_COLOR=1 node demo/review-gif.mjs $OUT/repo demo/review.gif"
+echo "  node demo/render.mjs $OUT/cap demo/batch.gif   # the batch flow, if you want it"

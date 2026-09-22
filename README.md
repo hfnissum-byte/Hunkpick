@@ -2,410 +2,103 @@
 
 [![test](https://github.com/hfnissum-byte/Hunkpick/actions/workflows/test.yml/badge.svg)](https://github.com/hfnissum-byte/Hunkpick/actions/workflows/test.yml)
 
-Resolves git merge conflicts by generating the possible resolutions and having a model
+Resolves git merge conflicts by working out every possible resolution and having a model
 pick one.
 
-For each conflict it computes the candidate resolutions (ours, theirs, union, line merge,
-token merge), discards the ones that do not parse, and sends the rest to a model to
-choose between. The model selects a candidate. It does not write code, so it cannot
-produce a file that fails to parse. It can pick the wrong candidate, which you catch by
-reading the diff.
+It computes the candidates itself — ours, theirs, union, a line merge, a token merge —
+throws away the ones that do not parse, and asks the model only to choose. The model never
+writes code, so it cannot produce a file that fails to parse. It can pick the wrong
+candidate, which is what review mode is for.
 
-![hunkpick resolving four conflicts](demo/hunkpick.gif)
-
-The clip runs it against four conflicts. It resolves three and leaves the fourth.
-`demo/capture.sh` builds the repo and runs the commands, `demo/render.mjs` draws the
-captured output.
-
-**Contents:** [Quick start](#quick-start) · [Output](#output) · [Review mode](#review-mode) ·
-[How it works](#how-it-works) · [JSON](#json-files) · [Options](#options) ·
-[Defaults](#before-you-trust-the-defaults) · [Benchmark](#benchmark) ·
-[Thresholds](#thresholds) · [Limits](#limits) · [Layout](#layout)
+![hunkpick review mode](demo/review.gif)
 
 ## Quick start
 
-Requires Node 20+, git, and a [TypeSafe](https://typesafe.ai) API key. No runtime
-dependencies; the tool imports only Node built-ins.
+Node 20+, git, and a [TypeSafe](https://typesafe.ai) API key. No runtime dependencies.
 
 ```bash
-git clone https://github.com/hfnissum-byte/hunkpick.git
-cd hunkpick
+git clone https://github.com/hfnissum-byte/Hunkpick.git
+cd Hunkpick
 cp .env.example .env        # add your key
-node test/run.mjs           # 70 offline tests, no API calls
 ```
 
-In a repository with conflicts:
+Then, in a repository with conflicts:
 
 ```bash
-node /path/to/hunkpick/hunkpick.mjs            # report only
-node /path/to/hunkpick/hunkpick.mjs --apply    # write the resolutions that pass the gates
+node /path/to/Hunkpick/hunkpick.mjs --review    # step through them
+node /path/to/Hunkpick/hunkpick.mjs             # report only, change nothing
+node /path/to/Hunkpick/hunkpick.mjs --apply     # write what passes the gates
 ```
 
-Without `--apply` nothing is modified. Nothing is staged or committed in either case.
-Unresolved conflicts keep their markers.
+Nothing is ever staged or committed. Conflicts it does not resolve keep their markers, so
+you finish them however you normally would.
 
-## Output
+## Two ways to run it
 
-![hunkpick output for four conflicts](demo/output.svg)
+**`--review`** walks the conflicts one at a time. The candidate batch mode would have
+applied is pre-selected, so accepting everything gives the same result as `--apply`.
+Keys: `j`/`k` to move, `enter` to accept, `s` to skip, `u` to undo, `n` for the next file,
+`q` to finish. It needs a real terminal — Git Bash pipes stdin, so use Windows Terminal,
+PowerShell, or `winpty`.
 
-| field | meaning |
-| --- | --- |
-| `RESOLVE` / `LEAVE` | whether the conflict will be written or left for you |
-| `merged_tokens`, `union`, … | which kind of resolution was chosen |
-| `approach` | probability the model assigns to that kind, 0 to 1 |
-| `mechanical` | probability that this is a merge rather than a decision for a person |
-| `correct` | JSON only: whether the key merge is right and safe to apply unreviewed |
-| `no match` | the model's answer was that none of the candidates is the resolution |
-| `│ …` | the lines that would be written |
-| `runner-up` | next best candidate, shown when above 0.05 |
+**No flag** prints a report and changes nothing. `--apply` writes the resolutions that
+clear the thresholds.
 
-Both bars must clear their thresholds before a conflict is written. Bars are amber near
-the threshold and red below it.
+![hunkpick batch output](demo/output.svg)
 
-Resolution kinds:
-
-| kind | result |
-| --- | --- |
-| `ours` | current branch's version |
-| `theirs` | incoming branch's version |
-| `union` | both, one after the other |
-| `merged_lines` | both, combined across lines |
-| `merged_tokens` | both, combined within a line |
-| `structural` | JSON merged key by key |
-| `base` / `drop` | revert both, or delete the region |
-
-`server.js` line 9 is the one it left. Both branches set the same timeout, to 1s and 30s.
-There is no mechanical answer, `mechanical 0.14` says so, and `theirs` is not a kind that
-applies unattended.
-
-`cart.js` line 3 is the borderline one. Both branches edited the same line compatibly, so
-a token merge exists, but combining a tax rate with a quantity changes what the function
-returns. It sits near the thresholds and does not always come out the same way: this run
-resolved it at `approach 0.59`, an earlier one answered `no match` and left it. That is
-the honest behaviour of a conflict on the boundary, not a bug.
-
-## Review mode
-
-```bash
-node hunkpick.mjs --review
-```
-
-Walks the conflicts one at a time and writes only what you accept. The candidate the
-batch mode would have applied is pre-selected, so accepting everything reproduces
-`--apply` exactly.
-
-```
-  cart.js  ·  hunk 1 of 1, line 3  ·  1/4  (0 accepted, 0 skipped)
-
-        let sum = 0;
-  ──────────────────────────────────────────────────────────
-    base    sum += it.price;
-    ours    sum += it.price * it.qty;
-    theirs  sum += it.price * (1 + TAX);
-  ──────────────────────────────────────────────────────────
-        return sum;
-
-  ▸ merged_tokens  0.59  sum += it.price * it.qty * (1 + TAX);
-    ours           0.22  sum += it.price * it.qty;
-    theirs         0.19  sum += it.price * (1 + TAX);
-
-  mechanical ███······· 0.27   a person should decide this
-
-  [enter] accept   [j/k] candidate   [s] skip   [u] undo   [n] next file   [q] done
-```
-
-Nothing is written until you finish, and nothing is ever staged or committed. Skipped
-conflicts keep their markers. `--review` cannot be combined with `--apply`, `--json` or
-`--all`; those write or print unattended, which is the opposite intent.
-
-It needs a real terminal. Git Bash and mintty hand node a pipe rather than a console, so
-`--review` there falls back to the report and tells you to use `winpty`, Windows Terminal
-or PowerShell.
+`approach` is how sure the model is of that kind of resolution; `mechanical` is how sure
+it is that this is a merge at all rather than a decision for a person. Both must clear
+their thresholds before anything is written.
 
 ## How it works
 
-### 1. Rebuild the conflict with its base
-
-The working-tree file contains both sides but not the common ancestor. hunkpick reads
-git's index stages (`:1:` base, `:2:` ours, `:3:` theirs) and runs
-`git merge-file --diff3` on them, which gives each hunk its base. The working tree is not
-modified.
-
-### 2. Generate candidates
-
-Per hunk: `ours`, `theirs`, `base`, `union` in both orders, `drop`, plus a line-level and
-a token-level three-way merge. The same merge function runs at both scales.
-
-The token pass handles the case where both sides edited one line compatibly:
-
-```
-base      sum += it.price;
-ours      sum += it.price * it.qty;
-theirs    sum += it.price * (1 + TAX);
-candidate sum += it.price * it.qty * (1 + TAX);
-```
-
-The candidate appears in neither branch.
-
-### 3. Discard candidates that do not parse
-
-Each candidate is rendered into the full file and parsed, with the other conflicts in
-that file pinned to `ours`. Checking a hunk in isolation is not sufficient; it can parse
-on its own and still break the surrounding code.
-
-### 4. Ask the model
-
-All conflicts in the repository go out in one request. Jev is a System One model: it
-returns typed values with probabilities instead of generating text. Two question types
-are used.
-
-- `Choice` over the surviving candidates, plus a no-match option.
-- `Noul`, a yes/no with a probability: whether a person needs to decide this.
-
-The state also carries what each branch changed relative to the ancestor, counted in
-lines. Without it a deletion looks like losing code, and the model keeps the code; that
-was the single largest source of wrong picks.
-
-The no-match option matters for the same reason. A `Choice` has to name one of its
-options, so without somewhere to put "none of these", the model names the nearest
-candidate and it gets written. Most of the remaining errors are regions the authors
-resolved by hand, where no candidate could have been right.
-
-The second question is separate because confidence does not cover it. A conflict can have
-one clearly best mechanical resolution and still require a decision, for example two
-valid timeout values or a check that one branch removed.
-
-### 5. Gate
-
-Thresholds are applied in code. The chosen kind must also be on the list allowed to apply
-unattended. Conflicts that fail a gate, or that came back as no-match, keep their markers.
-
-## JSON files
-
-A line or token merge cannot resolve two branches adding different keys to
-`package.json`, because the result requires a comma that appears in neither version.
-
-`.json` files are therefore parsed from all three stages, merged key by key, and
-serialised once. One Noul asks whether the result is correct and safe to apply.
-
-The structural merge declines and falls back to the line path when it cannot settle the
-conflict: two values for one key, an ambiguous array order, or a key deleted on one side
-and edited on the other. It also declines when the result equals one side, since that is
-a choice between branches and the Choice question handles it.
+1. **Rebuild the conflict with its ancestor**, from git's index stages via
+   `git merge-file --diff3`. Your working tree is not touched.
+2. **Generate candidates**: both sides, the ancestor, unions, and three-way merges over
+   the hunk's lines and over a single line's tokens. `.json` files are merged key by key
+   instead, which is the only way to resolve two branches adding different dependencies.
+3. **Discard whatever does not parse**, checked in the context of the whole file.
+4. **Ask the model** — one request for the whole merge. A `Choice` over the survivors plus
+   a no-match option, and a yes/no on whether a person needs to decide.
+5. **Gate it in code**, never in the model.
 
 ## Options
 
 | Flag | |
 | --- | --- |
-| `--apply` | write files; without it nothing is modified |
 | `--review` | step through the conflicts and write only what you accept |
+| `--apply` | write what passes the gates; without it nothing is modified |
 | `--confidence <0-1>` | minimum `approach` (default 0.55) |
 | `--safe <0-1>` | minimum `mechanical` (default 0.25) |
-| `--kinds <a,b,…\|all>` | kinds allowed to apply unattended (default set from the benchmark) |
+| `--kinds <a,b,…\|all>` | which kinds may apply unattended |
 | `--context <n>` | lines of context sent to the model (default 6) |
 | `--all` | apply everything, ignoring the gates |
 | `--json` | machine-readable output |
-| `--model <name>` | override the model |
 
 Exit codes: `0` all resolved, `1` some left, `2` nothing to do or an error.
 
-## Before you trust the defaults
+## How well it works
 
-The thresholds and the kind allow-list were fitted to `expressjs/express`. They do not
-transfer. The same benchmark on two more repositories:
+Measured by replaying real merges and comparing against what the maintainers committed.
+On 50 held-out merges from `expressjs/express`: **74% of what it writes is right**, and it
+handles 61% of the solvable conflicts.
 
-| | express | django | requests |
-| --- | --- | --- | --- |
-| precision | 74% | 65% | 43% |
-| the committed answer was `ours` | 65% | 38% | 20% |
-| the committed answer was `theirs` | 8% | 15% | **40%** |
+**Those numbers do not transfer.** The same benchmark gives 65% on django and 43% on
+requests, because the defaults were fitted to express's workflow. If your pull requests
+merge into main rather than the other way round, start with `--kinds all`.
 
-Express merges a maintenance branch into a development branch, so the development side
-usually wins and `ours` dominates. `requests` merges pull requests into main, the opposite
-direction, and there `theirs` is the most common correct answer — while being excluded
-from the defaults, which leaves the tool structurally unable to get those right.
-
-The django and requests samples are small (23 and 7 resolutions) and their intervals
-overlap express's, so the precision difference is not statistically established. The
-mechanism behind it is not in doubt.
-
-**If your pull requests merge into main, start with `--kinds all`** and compare against
-what you would have done. `bench/replay.mjs` will do that on your own history.
-
-## Benchmark
-
-`bench/replay.mjs` replays merges from a real repository. For each merge commit it checks
-out the first parent, merges the second, runs hunkpick, and compares the result to the
-merge commit's tree.
-
-```bash
-node bench/replay.mjs --repo /path/to/a/clone --max 25
-```
-
-Scoring is per conflict region, anchored on the stable lines on either side. Whole-file
-comparison does not work here because merge commits also contain edits unrelated to the
-conflicts.
-
-### Results
-
-The thresholds, the prompt and the kind list were set using merges 1–25. The numbers
-below are from merges 26–75, which none of that was fitted to.
-
-Across those 50 merges there were 266 conflict regions with a recoverable answer. In 74%
-of them the committed resolution was among the candidates; the other 26% were not
-reachable by any combination of the two sides.
-
-| | |
-| --- | --- |
-| resolutions written | 163 |
-| correct | 120 |
-| **precision** | **74%** (95% CI 66–80%) |
-| **recall of solvable conflicts** | **61%** |
-
-31 of the 43 errors were regions where no candidate matched what was committed, because
-the authors wrote the merge by hand. Counting only regions where a correct answer existed,
-precision is 91%. That does not make the other 12 harmless: a wrong resolution is a wrong
-resolution whether or not a right one was available.
-
-By kind, at the default thresholds and with no kind filter:
-
-| kind chosen | correct |
-| --- | --- |
-| `merged_lines` | 21/23 (91%) |
-| `ours` | 98/134 (73%) |
-| `theirs` | 4/20 (20%) |
-| `union` | 1/5 (20%) |
-| `union_reversed` | 0/1 |
-| `merged_tokens` | 0/1 |
-
-Excluding `theirs`, `union_reversed`, `base` and `drop` from unattended use takes overall
-precision from 67% to 74%. That is the default; `--kinds all` restores them. `union` is
-only weakly supported at n=5 and `merged_tokens` is effectively unmeasured, since express
-never produced a conflict where a token merge was the answer.
-
-The committed resolutions were `ours` most of the time. Express merges a maintenance
-branch into a development branch and the development side usually wins, so these
-proportions are specific to that workflow.
-
-### What moved the numbers
-
-Three changes, each measured against the setting before it:
-
-**Telling the model what each side did.** The dominant selection error was picking the
-incoming version when the current branch had deleted a region and the incoming branch had
-edited one line inside it — 24 of 38 wrong picks. Shown only the two versions, a deletion
-looks like losing code. `lib/judge.mjs` now states, in lines, what each branch changed
-relative to the ancestor. Correct selections went from 51 to 58 out of 118.
-
-**Fixing the thresholds.** On identical held-out data, changing only the gates:
-
-| gates | applied | correct | precision | recall |
-| --- | --- | --- | --- | --- |
-| 0.75 / 0.45 | 60 | 42 | 70% | 21% |
-| 0.55 / 0.25 | 163 | 120 | 74% | 61% |
-
-Better on both axes. The `mechanical` threshold had been discarding correct answers for
-nothing — see below.
-
-**Letting the model decline.** The `Choice` had to name a candidate even when the right
-answer was not among them, and that answer got written. Adding a no-match option, on the
-same merges: precision 73% → 81%, wrong resolutions 24 → 15, at the cost of one correct
-resolution.
-
-### What did not work
-
-**A second look at the chosen resolution.** After the gates, ask one Noul about the single
-resolution about to be written, rather than comparing candidates. It should catch the
-regions whose real answer was never on the list. It does not.
-
-| | applied | precision | rejected |
-| --- | --- | --- | --- |
-| no second look | 80 | 81% | |
-| "is this the resolution?" | 53 | 81% | 22 correct, 7 wrong |
-| "is any change missing?" | 63 | 79% | 16 correct, 2 wrong |
-
-Both framings cut coverage without moving precision. Worse, the first was anti-predictive:
-of the rejections scoring below 0.20, every single one had been correct, while the 0.35–0.50
-band was only 33% correct. It appears to answer "does this look complicated", and in this
-repository the complicated conflicts are deletions, which are usually right.
-
-The code is not in the tool. If you try this again, measure the rejections rather than the
-headline precision — a filter that removes good and bad answers at the same rate leaves
-precision unchanged and looks like it did nothing, which is exactly what happened.
-
-## Thresholds
-
-Binned by the reported number, over the held-out runs:
-
-| `approach` | correct | | `mechanical` | correct |
-| --- | --- | --- | --- | --- |
-| 0.45–0.60 | 67% | | 0.15–0.25 | 71% |
-| 0.60–0.75 | 71% | | 0.25–0.35 | 100% |
-| 0.75–0.90 | 80% | | 0.35–0.45 | 50% |
-| 0.90–1.00 | 84% | | 0.45+ | 73–77% |
-
-`approach` is monotonic: it predicts correctness and is worth gating on. `mechanical` is
-flat, so as an accuracy gate it does nothing but cut coverage, which is why it went from
-0.45 to 0.25.
-
-That is not a fault in the Noul. It answers "does a person need to decide this", which is
-not the same question as "is this pick correct" — a conflict can be resolvable the way the
-maintainer resolved it and still be a decision you want to make yourself. It is kept as a
-gate for the extreme cases, and as a column you can read, but it is not evidence about
-accuracy and is not tuned as though it were.
-
-Both numbers are fitted to one repository. Run the benchmark on your own merges with
-`--json`, compare against what you would have done, and move them.
-
-Because `approach` is monotonic, `--confidence` is the dial that actually trades coverage
-for precision. On the held-out data:
-
-| `--confidence` | applied | precision | recall |
-| --- | --- | --- | --- |
-| 0.55 (default) | 163 | 74% | 61% |
-| 0.65 | 136 | 74% | 52% |
-| 0.75 | 102 | 76% | 40% |
-
-It is a shallow curve. Halving the coverage buys two points of precision, which is worth
-knowing before reaching for it.
-
-### Gating on approach rather than confidence
-
-Two orderings of a union are the same resolution in a different order. The Choice
-distributes probability across both, which lowers confidence even though the model is not
-uncertain about the kind.
-
-The first conflict this was tested on selected the correct resolution at 0.64 with its own
-reverse ordering at 0.30. Summed, the kind had 0.94.
-
-The gate therefore sums probability across candidates of the same kind, which is what the
-`approach` column shows. The selection within the kind is still the model's. `ours` and
-`theirs` have one candidate each, so their numbers are unchanged.
+[The full measurements, including what did not work](docs/BENCHMARK.md).
 
 ## Limits
 
-- Content conflicts only. Add/add, delete/modify and rename conflicts are reported and
-  skipped.
+- Roughly one in four written resolutions is not what you would have written. Review the
+  diff, or use `--review`.
+- Content conflicts only. Add/add, delete/modify and renames are reported and skipped.
 - Syntax checking covers `.js`, `.mjs`, `.cjs`, `.py` and `.json`. Other file types are
-  checked for leftover conflict markers and otherwise accepted. Add cases to
-  `lib/validate.mjs` for more.
-- `node --check` is unreliable for `.js`. A `.js` file containing ESM syntax exits 0 even
-  when it does not parse: the CommonJS parse fails, Node retries as a module, and the
-  error is discarded. The validator checks JavaScript as `.mjs`, then `.cjs`. There is a
-  regression test for this.
-- A resolution that parses and preserves both sides can still be wrong. Review the diff.
+  checked only for leftover conflict markers.
+- A resolution that parses and keeps both sides can still be wrong.
 
-At 74% precision, roughly one in four of the resolutions it writes is not what you would
-have written. It is a first pass over the mechanical conflicts, not an unattended merge
-bot. The usual loop:
-
-```bash
-node hunkpick.mjs            # see what it proposes
-node hunkpick.mjs --apply
-git diff                     # read it before git add
-```
-
-If one is wrong, that file goes back to its original conflict. hunkpick never touches the
+If one is wrong, that file goes back to its original conflict — hunkpick never touches the
 index, so all three stages are still there:
 
 ```bash
@@ -416,28 +109,19 @@ git checkout --merge -- path/to/file.js
 
 | Path | |
 | --- | --- |
-| `hunkpick.mjs` | CLI: generate, judge, gate, write, report |
-| `lib/git.mjs` | index stages, diff3 reconstruction, branch context |
-| `lib/conflicts.mjs` | conflict marker parsing and rendering |
+| `hunkpick.mjs` | the CLI |
+| `lib/pipeline.mjs` | gather candidates, apply the gates |
 | `lib/candidates.mjs` | three-way merge over lines and tokens |
 | `lib/structured.mjs` | three-way merge over JSON keys |
 | `lib/validate.mjs` | per-extension syntax checks |
-| `lib/ui.mjs` | colour and width helpers, shared by the report and the review UI |
-| `lib/review.mjs` | interactive review: queue, state machine, rendering, terminal driver |
 | `lib/judge.mjs` | builds and sends the request |
-| `test/run.mjs` | 70 offline tests, no git, no API, no terminal |
-| `bench/replay.mjs` | replays merges and scores against the commit |
-| `bench/inspect.mjs` | dumps one conflict with its candidates and the committed answer |
-| `demo/capture.sh` | builds the demo repo and records the runs |
-| `demo/render.mjs` | renders a recording as a GIF |
-| `demo/svg.mjs` | renders one run as the SVG above |
-| `bench/compare.mjs` | puts runs from different repositories side by side |
+| `lib/review.mjs` | the interactive UI: queue, state machine, rendering, driver |
+| `test/run.mjs` | 71 offline tests — no git, no API, no terminal |
+| `bench/` | the replay harness and its comparison tooling |
+| `demo/` | builds the fixture repo and records the GIFs |
 
 ```bash
 npm test
 ```
 
-## Credentials
-
-`TYPESAFE_API_KEY` in a `.env` file next to `hunkpick.mjs`, or in the environment. `.env`
-is gitignored; see `.env.example`.
+`TYPESAFE_API_KEY` goes in `.env` next to `hunkpick.mjs`, or in the environment.
