@@ -247,6 +247,27 @@ answer was not among them, and that answer got written. Adding a no-match option
 same merges: precision 73% → 81%, wrong resolutions 24 → 15, at the cost of one correct
 resolution.
 
+### What did not work
+
+**A second look at the chosen resolution.** After the gates, ask one Noul about the single
+resolution about to be written, rather than comparing candidates. It should catch the
+regions whose real answer was never on the list. It does not.
+
+| | applied | precision | rejected |
+| --- | --- | --- | --- |
+| no second look | 80 | 81% | |
+| "is this the resolution?" | 53 | 81% | 22 correct, 7 wrong |
+| "is any change missing?" | 63 | 79% | 16 correct, 2 wrong |
+
+Both framings cut coverage without moving precision. Worse, the first was anti-predictive:
+of the rejections scoring below 0.20, every single one had been correct, while the 0.35–0.50
+band was only 33% correct. It appears to answer "does this look complicated", and in this
+repository the complicated conflicts are deletions, which are usually right.
+
+The code is not in the tool. If you try this again, measure the rejections rather than the
+headline precision — a filter that removes good and bad answers at the same rate leaves
+precision unchanged and looks like it did nothing, which is exactly what happened.
+
 ## Thresholds
 
 Binned by the reported number, over the held-out runs:
@@ -269,8 +290,19 @@ gate for the extreme cases, and as a column you can read, but it is not evidence
 accuracy and is not tuned as though it were.
 
 Both numbers are fitted to one repository. Run the benchmark on your own merges with
-`--json`, compare against what you would have done, and move them. `--confidence 0.75`
-trades coverage for precision: 76% at 40% recall on the same data.
+`--json`, compare against what you would have done, and move them.
+
+Because `approach` is monotonic, `--confidence` is the dial that actually trades coverage
+for precision. On the held-out data:
+
+| `--confidence` | applied | precision | recall |
+| --- | --- | --- | --- |
+| 0.55 (default) | 163 | 74% | 61% |
+| 0.65 | 136 | 74% | 52% |
+| 0.75 | 102 | 76% | 40% |
+
+It is a shallow curve. Halving the coverage buys two points of precision, which is worth
+knowing before reaching for it.
 
 ### Gating on approach rather than confidence
 
